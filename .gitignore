@@ -1,0 +1,80 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# =========================
+# Virtual environments
+# =========================
+.venv/
+venv/
+env/
+
+# =========================
+# Environment / secrets
+# =========================
+.env
+.env.*
+!.env.example
+
+# =========================
+# IDE / editor
+# =========================
+.idea/
+.vscode/
+
+# =========================
+# OS-generated files
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+# Build / packaging
+# =========================
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Runtime / temporary files
+# =========================
+*.log
+*.tmp
+*.temp
+tmp/
+temp/
+
+# =========================
+# Local databases
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+# =========================
+# Evaluation outputs
+# =========================
+evaluation/reports/
+evaluation/results/
+evaluation/artifacts/
+
+# =========================
+# Local dataset artifacts
+# =========================
+datasets/generated/
+datasets/raw/private/
+
+# =========================
+# Application storage
+# =========================
+storage/
+uploads/
