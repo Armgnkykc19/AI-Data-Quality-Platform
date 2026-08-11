@@ -1,0 +1,43 @@
+dataset:
+  name: fixture
+  version: "0.1.0"
+
+evaluation:
+  entity_resolution:
+    enabled: true
+  schema_mapping:
+    enabled: true
+  normalization:
+    enabled: true
+  validation:
+    enabled: true
+
+hard_gates:
+  auto_merge_precision:
+    operator: gte
+    threshold: 0.99
+
+  false_merge_rate:
+    operator: lte
+    threshold: 0.005
+
+  candidate_recall:
+    operator: gte
+    threshold: 0.94
+
+  schema_mapping_accuracy:
+    operator: gte
+    threshold: 0.98
+
+  normalization_accuracy:
+    operator: gte
+    threshold: 0.995
+
+  review_routing_recall:
+    operator: gte
+    threshold: 0.95
+
+reporting:
+  output_directory: evaluation/reports/latest
+  json: true
+  markdown: true
