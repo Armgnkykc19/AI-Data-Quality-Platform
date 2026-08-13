@@ -3,6 +3,9 @@ from pathlib import Path
 
 from evaluation.evaluator.hard_gates import HardGateResult
 
+EVALUATION_MODE_FIXTURE_SMOKE = "FIXTURE_SMOKE"
+PRODUCT_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+
 
 def build_report_data(
     *,
@@ -11,12 +14,21 @@ def build_report_data(
     metrics: dict[str, float],
     gate_results: list[HardGateResult],
     overall_passed: bool,
+    evaluation_mode: str = EVALUATION_MODE_FIXTURE_SMOKE,
+    product_quality_evaluation: str = PRODUCT_QUALITY_NOT_YET_AVAILABLE,
 ) -> dict:
+    hard_gate_status = "PASS" if overall_passed else "FAIL"
+
     return {
+        "evaluation_mode": evaluation_mode,
+        "product_quality_evaluation": product_quality_evaluation,
+        "hard_gate_status": hard_gate_status,
+        "overall_infrastructure_status": hard_gate_status,
         "dataset": {
             "name": dataset_name,
             "version": dataset_version,
         },
+        "metrics_source": "fixture_smoke",
         "metrics": metrics,
         "hard_gates": [
             {
@@ -28,7 +40,7 @@ def build_report_data(
             }
             for result in gate_results
         ],
-        "overall_status": "PASS" if overall_passed else "FAIL",
+        "overall_status": hard_gate_status,
     }
 
 
@@ -46,11 +58,14 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
     lines = [
         "# Evaluation Report",
         "",
+        f"**Evaluation Mode:** {report_data['evaluation_mode']}",
+        f"**Product Quality Evaluation:** {report_data['product_quality_evaluation']}",
         f"**Dataset:** {report_data['dataset']['name']}",
         f"**Version:** {report_data['dataset']['version']}",
-        f"**Overall Status:** {report_data['overall_status']}",
+        f"**Hard Gate Status:** {report_data['hard_gate_status']}",
+        f"**Overall Infrastructure Status:** {report_data['overall_infrastructure_status']}",
         "",
-        "## Metrics",
+        "## Fixture Smoke Metrics (Infrastructure Only)",
         "",
         "| Metric | Value |",
         "|---|---:|",
@@ -62,7 +77,7 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
     lines.extend(
         [
             "",
-            "## Hard Gates",
+            "## Hard Gates (Fixture Smoke)",
             "",
             "| Gate | Actual | Operator | Threshold | Status |",
             "|---|---:|:---:|---:|:---:|",

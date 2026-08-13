@@ -1,0 +1,152 @@
+{
+  "version": "0.1.0",
+  "generated_at": "2026-08-13T14:01:59.483661+00:00",
+  "seed": 42,
+  "record_count": 10000,
+  "expected_counts": {
+    "canonical_records": 10000,
+    "source_a_records": 10000,
+    "source_b_records": 10000,
+    "source_c_records": 10778,
+    "hard_positive_records": 400,
+    "hard_negative_records": 400,
+    "duplicate_groups": 778,
+    "positive_pairs": 978,
+    "hard_negative_pairs": 200,
+    "corruption_events": 27694
+  },
+  "corruption_counts": {
+    "whitespace": 3452,
+    "case_change": 3498,
+    "unicode_turkish": 931,
+    "phone_format": 823,
+    "punctuation": 689,
+    "abbreviation": 642,
+    "missing_value": 12216,
+    "typo": 2218,
+    "duplicate": 778,
+    "field_conflict": 1929,
+    "email_corruption": 518
+  },
+  "files": {
+    "canonical": {
+      "path": "clean\\canonical.csv",
+      "sha256": "581a9d327725d27df56e8bdd5e0b1b9f679723bf4af2c5dcaa3ee95cc3eea5ce",
+      "size_bytes": 1449856
+    },
+    "corruption_log": {
+      "path": "ground_truth\\corruption_log.jsonl",
+      "sha256": "bc892f9c4819e111c862599fed927932bf39c4ab29fe13011c660ba068d80881",
+      "size_bytes": 6678991
+    },
+    "ground_truth_summary": {
+      "path": "ground_truth\\summary.json",
+      "sha256": "a7987f586e4060e15a1c8c07458b91e51d64e2c88f2fb067db0370d39baeb49a",
+      "size_bytes": 1763738
+    },
+    "hard_negatives": {
+      "path": "hard_cases\\hard_negatives.csv",
+      "sha256": "83f5b7b879163d766ced0063084f290da81f2ae347f245e561ab4548d13685df",
+      "size_bytes": 67493
+    },
+    "hard_positives": {
+      "path": "hard_cases\\hard_positives.csv",
+      "sha256": "29e8d98379685f7d39f3968968250bd313b188af09dd431a82387fe813b1401b",
+      "size_bytes": 57550
+    },
+    "person_splits": {
+      "path": "splits\\person_splits.json",
+      "sha256": "ffef8811dc9f9b647a350cd7143306c116800a5712c4c16484b8f760af068dee",
+      "size_bytes": 170066
+    },
+    "source_a": {
+      "path": "sources\\source_a.csv",
+      "sha256": "ad9d15a5158639f92280c94a8330eb2c5497786eaf26c0b2eb42ede4215a97f8",
+      "size_bytes": 1618766
+    },
+    "source_b": {
+      "path": "sources\\source_b.csv",
+      "sha256": "5be7a1d2e6208b475f531755cf801a0d76ceb2c1fbbb4d0435d01c3a9999df09",
+      "size_bytes": 1718768
+    },
+    "source_c": {
+      "path": "sources\\source_c.csv",
+      "sha256": "b6732c56164cd236df19fef3f6605f8e584b682b69510a9e5312abae2ee7e66c",
+      "size_bytes": 1715225
+    }
+  },
+  "generation_config": {
+    "dataset_config": "{'version': '0.1.0', 'seed': 42, 'generation': {'record_count': 10000, 'min_record_count': 5000, 'max_record_count': 20000}, 'output': {'base_directory': 'datasets/golden/v0.1.0'}, 'schema': {'config_path': 'configs/canonical_schema.yaml'}, 'splits': {'train_ratio': 0.7, 'validation_ratio': 0.15, 'test_ratio': 0.15, 'holdout_seed': 99}, 'sources': {'source_a': {'enabled': True, 'corruption_profile': 'formatting_noise'}, 'source_b': {'enabled': True, 'corruption_profile': 'schema_variation'}, 'source_c': {'enabled': True, 'corruption_profile': 'semantic_noise'}}, 'hard_cases': {'hard_positives_count': 200, 'hard_negatives_count': 200, 'hard_negative_similarity_seed': 7}, 'malformed': {'enabled': True, 'output_subdirectory': 'malformed'}}",
+    "canonical_fields": [
+      "person_id",
+      "first_name",
+      "last_name",
+      "email",
+      "phone",
+      "company",
+      "city",
+      "district",
+      "address"
+    ]
+  },
+  "reproducibility": {
+    "command": "python scripts/build_golden_dataset.py --config configs/dataset.yaml",
+    "note": "Same seed and config produce identical content hashes."
+  },
+  "malformed_fixtures": {
+    "empty_file.csv": {
+      "category": "empty_file",
+      "description": "Completely empty CSV file with no header and no rows.",
+      "encoding": "utf-8",
+      "path": "empty_file.csv"
+    },
+    "header_only.csv": {
+      "category": "header_only",
+      "description": "CSV file containing only a header row.",
+      "encoding": "utf-8",
+      "path": "header_only.csv"
+    },
+    "duplicate_header.csv": {
+      "category": "duplicate_header",
+      "description": "CSV file with repeated header column names.",
+      "encoding": "utf-8",
+      "path": "duplicate_header.csv"
+    },
+    "missing_column_row.csv": {
+      "category": "missing_column",
+      "description": "Row with fewer columns than the header declares.",
+      "encoding": "utf-8",
+      "path": "missing_column_row.csv"
+    },
+    "extra_column_row.csv": {
+      "category": "extra_column",
+      "description": "Row with more columns than the header declares.",
+      "encoding": "utf-8",
+      "path": "extra_column_row.csv"
+    },
+    "broken_quotes.csv": {
+      "category": "broken_quotes",
+      "description": "Unbalanced double quotes inside a quoted field.",
+      "encoding": "utf-8",
+      "path": "broken_quotes.csv"
+    },
+    "semicolon_delimiter.csv": {
+      "category": "alternate_delimiter",
+      "description": "Semicolon-delimited file instead of comma-delimited CSV.",
+      "encoding": "utf-8",
+      "path": "semicolon_delimiter.csv"
+    },
+    "utf8_turkish.csv": {
+      "category": "utf8_encoding",
+      "description": "Valid UTF-8 content with Turkish characters.",
+      "encoding": "utf-8",
+      "path": "utf8_turkish.csv"
+    },
+    "latin5_turkish.csv": {
+      "category": "alternate_encoding",
+      "description": "Turkish content encoded with ISO-8859-9 (latin5).",
+      "encoding": "latin5",
+      "path": "latin5_turkish.csv"
+    }
+  }
+}

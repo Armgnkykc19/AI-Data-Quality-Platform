@@ -33,5 +33,11 @@ jobs:
       - name: Run tests
         run: pytest
 
+      - name: Build golden dataset CI smoke artifact
+        run: python scripts/build_golden_dataset.py --config configs/dataset.ci.yaml
+
+      - name: Validate golden dataset CI smoke artifact
+        run: python scripts/validate_dataset.py --dataset datasets/generated/ci-smoke/v0.1.0
+
       - name: Run evaluation smoke test
-        run: python -m evaluation.run
+        run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0

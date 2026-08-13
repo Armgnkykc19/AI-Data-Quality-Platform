@@ -34,8 +34,13 @@ def test_build_report_data_contains_expected_structure() -> None:
 
     assert report["dataset"]["name"] == "fixture"
     assert report["dataset"]["version"] == "0.1.0"
+    assert report["evaluation_mode"] == "FIXTURE_SMOKE"
+    assert report["product_quality_evaluation"] == "NOT_YET_AVAILABLE"
+    assert report["metrics_source"] == "fixture_smoke"
     assert report["metrics"]["auto_merge_precision"] == 0.995
     assert report["hard_gates"][0]["passed"] is True
+    assert report["hard_gate_status"] == "PASS"
+    assert report["overall_infrastructure_status"] == "PASS"
     assert report["overall_status"] == "PASS"
 
 
@@ -59,6 +64,9 @@ def test_write_markdown_report(tmp_path: Path) -> None:
     content = output_path.read_text(encoding="utf-8")
 
     assert "# Evaluation Report" in content
+    assert "**Evaluation Mode:** FIXTURE_SMOKE" in content
+    assert "**Product Quality Evaluation:** NOT_YET_AVAILABLE" in content
     assert "**Dataset:** fixture" in content
-    assert "**Overall Status:** PASS" in content
+    assert "**Hard Gate Status:** PASS" in content
+    assert "Fixture Smoke Metrics (Infrastructure Only)" in content
     assert "auto_merge_precision" in content

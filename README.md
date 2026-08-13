@@ -47,10 +47,35 @@ Current capabilities include:
 - Ruff static analysis,
 - GitHub Actions continuous integration.
 
-Run the current evaluation harness:
+Run the evaluation harness (fixture smoke — not product quality):
 
 ```bash
 python -m evaluation.run
+```
+
+The harness runs in `FIXTURE_SMOKE` mode until real engine metrics exist. Hard-gate PASS validates infrastructure wiring only; product quality evaluation is `NOT_YET_AVAILABLE`.
+
+## Sprint 02
+
+Sprint 02 adds the golden dataset and controlled corruption engine.
+
+Current capabilities include:
+
+- deterministic canonical clean-base generation,
+- modular corruption families with auditable history,
+- Source A / B / C variants,
+- hard positives and hard negatives,
+- malformed input fixtures,
+- isolated ground truth and person-level splits,
+- dataset manifest with SHA-256 hashes,
+- dataset build/validate CLI commands.
+
+Build and validate the golden dataset:
+
+```bash
+python scripts/build_golden_dataset.py --config configs/dataset.yaml
+python scripts/validate_dataset.py --dataset datasets/golden/v0.1.0
+python -m evaluation.run --dataset datasets/golden/v0.1.0
 ```
 
 Run the test suite:
@@ -67,4 +92,4 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 01.
+Early development — Sprint 02 (Golden Dataset & Corruption Engine).

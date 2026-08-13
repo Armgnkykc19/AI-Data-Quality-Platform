@@ -72,6 +72,17 @@ evaluation/artifacts/
 # =========================
 datasets/generated/
 datasets/raw/private/
+datasets/golden/**/clean/
+datasets/golden/**/sources/
+datasets/golden/**/hard_cases/
+datasets/golden/**/ground_truth/
+datasets/golden/**/splits/
+!datasets/golden/README.md
+!datasets/golden/**/manifest.json
+!datasets/golden/**/README.md
+!datasets/golden/**/schema/
+!datasets/golden/**/config/
+!datasets/golden/**/malformed/
 
 # =========================
 # Application storage

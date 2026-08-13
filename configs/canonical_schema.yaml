@@ -1,0 +1,60 @@
+version: "0.1.0"
+description: Canonical customer person schema for golden dataset generation.
+
+fields:
+  person_id:
+    type: string
+    required: true
+    description: Stable canonical identifier for a person record.
+    pattern: "^P-\\d{6}$"
+
+  first_name:
+    type: string
+    required: true
+    description: Given name of the person.
+
+  last_name:
+    type: string
+    required: true
+    description: Family name of the person.
+
+  email:
+    type: string
+    required: true
+    description: Primary email address.
+
+  phone:
+    type: string
+    required: true
+    description: Primary phone number in normalized E.164-like format.
+
+  company:
+    type: string
+    required: true
+    description: Employer or organization name.
+
+  city:
+    type: string
+    required: true
+    description: City component of the address.
+
+  district:
+    type: string
+    required: true
+    description: District or neighborhood component of the address.
+
+  address:
+    type: string
+    required: true
+    description: Street-level address line.
+
+source_fields:
+  source_record_id:
+    type: string
+    required: true
+    description: Unique identifier within a source dataset variant.
+
+  source_name:
+    type: string
+    required: true
+    description: Name of the source dataset variant (source_a, source_b, etc.).

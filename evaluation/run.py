@@ -3,11 +3,14 @@ from pathlib import Path
 
 import yaml
 
+from dataset.validation import validate_dataset
 from evaluation.evaluator.hard_gates import (
     all_hard_gates_pass,
     evaluate_hard_gates,
 )
 from evaluation.reporting import (
+    EVALUATION_MODE_FIXTURE_SMOKE,
+    PRODUCT_QUALITY_NOT_YET_AVAILABLE,
     build_report_data,
     write_json_report,
     write_markdown_report,
@@ -26,6 +29,15 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=DEFAULT_CONFIG_PATH,
         help="Path to the evaluation YAML configuration file.",
+    )
+    parser.add_argument(
+        "--dataset",
+        type=Path,
+        default=None,
+        help=(
+            "Optional generated golden dataset path for oracle/sanity-check validation. "
+            "Does not report oracle results as product hard-gate success."
+        ),
     )
 
     return parser.parse_args()
@@ -47,7 +59,22 @@ def get_fixture_metrics() -> dict[str, float]:
     }
 
 
-def run_evaluation(config_path: Path) -> int:
+def run_dataset_sanity_checks(dataset_path: Path) -> tuple[bool, list[str]]:
+    messages: list[str] = []
+    validation = validate_dataset(dataset_path)
+    for issue in validation.issues:
+        messages.append(f"{issue.severity}:{issue.code}:{issue.message}")
+
+    if not validation.passed:
+        messages.append("dataset_contract:FAIL")
+        return False, messages
+
+    messages.append("dataset_contract:PASS")
+    messages.append("oracle_sanity_check:PASS")
+    return True, messages
+
+
+def run_evaluation(config_path: Path, dataset_path: Path | None = None) -> int:
     try:
         config = load_config(config_path)
 
@@ -61,19 +88,34 @@ def run_evaluation(config_path: Path) -> int:
 
         overall_passed = all_hard_gates_pass(gate_results)
 
+        if dataset_path is not None:
+            sanity_passed, sanity_messages = run_dataset_sanity_checks(dataset_path)
+            print("Dataset Sanity Checks")
+            print("------------------")
+            for message in sanity_messages:
+                print(message)
+            print()
+            if not sanity_passed:
+                print("Dataset Sanity Status: FAIL")
+                return 1
+            print("Dataset Sanity Status: PASS (oracle/sanity-check only)")
+            print()
+
         print("Evaluation Harness")
         print("------------------")
+        print(f"Evaluation Mode: {EVALUATION_MODE_FIXTURE_SMOKE}")
+        print(f"Product Quality Evaluation: {PRODUCT_QUALITY_NOT_YET_AVAILABLE}")
         print(f"Dataset: {dataset['name']}")
         print(f"Version: {dataset['version']}")
         print()
 
-        print("Metrics")
+        print("Fixture Smoke Metrics (Infrastructure Only)")
         print("------------------")
         for metric_name, value in metrics.items():
             print(f"{metric_name}: {value:.4f}")
 
         print()
-        print("Hard Gates")
+        print("Hard Gates (Fixture Smoke)")
         print("------------------")
 
         for result in gate_results:
@@ -109,12 +151,16 @@ def run_evaluation(config_path: Path) -> int:
 
         print()
         print(f"Reports: {output_directory}")
+        print()
+
+        hard_gate_status = "PASS" if overall_passed else "FAIL"
+        print(f"Hard Gate Status: {hard_gate_status}")
+        print(f"Overall Infrastructure Status: {hard_gate_status}")
+        print(f"Product Quality Evaluation: {PRODUCT_QUALITY_NOT_YET_AVAILABLE}")
 
         if overall_passed:
-            print("Overall Status: PASS")
             return 0
 
-        print("Overall Status: FAIL")
         return 1
 
     except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError) as exc:
@@ -125,7 +171,7 @@ def run_evaluation(config_path: Path) -> int:
 def main() -> int:
     args = parse_args()
 
-    return run_evaluation(args.config)
+    return run_evaluation(args.config, args.dataset)
 
 
 if __name__ == "__main__":
