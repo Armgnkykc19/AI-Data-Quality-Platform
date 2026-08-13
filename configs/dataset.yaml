@@ -1,0 +1,39 @@
+version: "0.1.0"
+seed: 42
+
+generation:
+  record_count: 10000
+  min_record_count: 5000
+  max_record_count: 20000
+
+output:
+  base_directory: datasets/golden/v0.1.0
+
+schema:
+  config_path: configs/canonical_schema.yaml
+
+splits:
+  train_ratio: 0.70
+  validation_ratio: 0.15
+  test_ratio: 0.15
+  holdout_seed: 99
+
+sources:
+  source_a:
+    enabled: true
+    corruption_profile: formatting_noise
+  source_b:
+    enabled: true
+    corruption_profile: schema_variation
+  source_c:
+    enabled: true
+    corruption_profile: semantic_noise
+
+hard_cases:
+  hard_positives_count: 200
+  hard_negatives_count: 200
+  hard_negative_similarity_seed: 7
+
+malformed:
+  enabled: true
+  output_subdirectory: malformed

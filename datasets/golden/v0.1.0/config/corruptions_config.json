@@ -1,0 +1,134 @@
+{
+  "version": "0.1.0",
+  "seed": 42,
+  "profiles": {
+    "formatting_noise": {
+      "description": "Case, unicode, whitespace, punctuation, and format variations.",
+      "field_rates": {
+        "first_name": 0.35,
+        "last_name": 0.35,
+        "email": 0.2,
+        "phone": 0.45,
+        "company": 0.4,
+        "city": 0.25,
+        "district": 0.25,
+        "address": 0.3
+      },
+      "corruption_weights": {
+        "case_change": 0.2,
+        "unicode_turkish": 0.15,
+        "whitespace": 0.2,
+        "punctuation": 0.1,
+        "phone_format": 0.2,
+        "abbreviation": 0.15
+      }
+    },
+    "schema_variation": {
+      "description": "Column renaming, reordering, missing values, and extra columns.",
+      "missing_value_rate": 0.12,
+      "extra_columns": [
+        "legacy_code",
+        "import_batch",
+        "notes"
+      ],
+      "column_aliases": {
+        "phone": [
+          "mobile",
+          "gsm",
+          "cep_telefonu"
+        ],
+        "email": [
+          "email_address",
+          "e_mail"
+        ],
+        "company": [
+          "organization",
+          "sirket"
+        ],
+        "first_name": [
+          "ad",
+          "given_name"
+        ],
+        "last_name": [
+          "soyad",
+          "surname"
+        ],
+        "city": [
+          "sehir",
+          "il"
+        ],
+        "district": [
+          "ilce",
+          "mahalle"
+        ],
+        "address": [
+          "adres",
+          "street"
+        ]
+      }
+    },
+    "semantic_noise": {
+      "description": "Typos, duplicates, field conflicts, and stacked corruptions.",
+      "field_rates": {
+        "first_name": 0.25,
+        "last_name": 0.25,
+        "email": 0.3,
+        "phone": 0.2,
+        "company": 0.25,
+        "city": 0.15,
+        "district": 0.15,
+        "address": 0.2
+      },
+      "corruption_weights": {
+        "typo": 0.25,
+        "email_corruption": 0.15,
+        "missing_value": 0.1,
+        "field_conflict": 0.15,
+        "duplicate": 0.2,
+        "case_change": 0.05,
+        "whitespace": 0.05,
+        "unicode_turkish": 0.05
+      },
+      "duplicate_rate": 0.08,
+      "conflict_rate": 0.05,
+      "max_corruptions_per_record": 4
+    },
+    "hard_positive": {
+      "description": "Aggressive corruption while preserving identity for hard positives.",
+      "field_rates": {
+        "first_name": 0.7,
+        "last_name": 0.7,
+        "email": 0.6,
+        "phone": 0.65,
+        "company": 0.55,
+        "city": 0.5,
+        "district": 0.5,
+        "address": 0.6
+      },
+      "corruption_weights": {
+        "typo": 0.2,
+        "missing_value": 0.2,
+        "case_change": 0.15,
+        "unicode_turkish": 0.15,
+        "whitespace": 0.1,
+        "phone_format": 0.1,
+        "email_corruption": 0.1
+      },
+      "max_corruptions_per_record": 5
+    }
+  },
+  "severities": {
+    "case_change": "low",
+    "unicode_turkish": "low",
+    "whitespace": "low",
+    "punctuation": "low",
+    "typo": "medium",
+    "abbreviation": "low",
+    "phone_format": "low",
+    "email_corruption": "medium",
+    "missing_value": "medium",
+    "column_rename": "low",
+    "duplicate": "high",
+    "field_conflict": "high"
+  }
+}
