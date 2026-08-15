@@ -2,7 +2,7 @@
 
 Small, documented malformed CSV fixtures for parser and ingestion tests.
 
-- `broken_quotes.csv` (broken_quotes): Unbalanced double quotes inside a quoted field.
+- `broken_quotes.csv` (broken_quotes): Unclosed double quote before EOF; the affected logical row is rejected (`unclosed_quote`) rather than silently accepted.
 - `duplicate_header.csv` (duplicate_header): CSV file with repeated header column names.
 - `empty_file.csv` (empty_file): Completely empty CSV file with no header and no rows.
 - `extra_column_row.csv` (extra_column): Row with more columns than the header declares.

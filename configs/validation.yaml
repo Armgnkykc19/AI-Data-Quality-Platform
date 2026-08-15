@@ -1,0 +1,97 @@
+version: "0.1.0"
+
+required_fields:
+  - first_name
+  - last_name
+  - email
+  - phone
+  - company
+  - city
+  - district
+  - address
+
+defaults:
+  severity:
+    required: error
+    format: error
+    length: warning
+    location: warning
+    cross_field: warning
+    whitespace: info
+
+rules:
+  required.missing: true
+  email.syntax: true
+  phone.format: true
+  phone.tr_e164: true
+  text.max_length: true
+  text.blank: true
+  text.noncanonical_whitespace: true
+  type.string: true
+  company.min_length: true
+  address.min_length: true
+  location.city_known: true
+  location.district_known: true
+  cross_field.city_district: true
+
+text_max_lengths:
+  first_name: 100
+  last_name: 100
+  email: 254
+  company: 200
+  city: 100
+  district: 100
+  address: 500
+
+location:
+  known_cities:
+    - İstanbul
+    - Ankara
+    - İzmir
+    - Bursa
+    - Antalya
+    - Adana
+    - Konya
+    - Gaziantep
+    - Kocaeli
+    - Mersin
+  known_districts:
+    - Kadıköy
+    - Beşiktaş
+    - Çankaya
+    - Konak
+    - Nilüfer
+    - Muratpaşa
+    - Seyhan
+    - Selçuklu
+    - Şahinbey
+    - Mezitli
+    - İzmit
+
+cross_field:
+  city_district_map:
+    İstanbul:
+      - Kadıköy
+      - Beşiktaş
+    Ankara:
+      - Çankaya
+    İzmir:
+      - Konak
+    Bursa:
+      - Nilüfer
+    Antalya:
+      - Muratpaşa
+    Adana:
+      - Seyhan
+    Konya:
+      - Selçuklu
+    Gaziantep:
+      - Şahinbey
+    Kocaeli:
+      - İzmit
+    Mersin:
+      - Mezitli
+
+reporting:
+  output_directory: validation/reports/latest
+  json: true

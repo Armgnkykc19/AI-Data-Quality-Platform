@@ -67,6 +67,8 @@ evaluation/reports/
 evaluation/results/
 evaluation/artifacts/
 ingestion/reports/
+validation/reports/
+normalization/reports/
 
 # =========================
 # Local dataset artifacts

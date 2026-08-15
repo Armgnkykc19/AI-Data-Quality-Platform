@@ -1,0 +1,258 @@
+[
+  {
+    "case_id": "required_missing_first_name",
+    "category": "required",
+    "target_rule_id": "required.missing",
+    "expect_issue": true,
+    "record": {
+      "first_name": "",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "required_present_clean",
+    "category": "required",
+    "target_rule_id": "required.missing",
+    "expect_issue": false,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "email_syntax_invalid_double_at",
+    "category": "email",
+    "target_rule_id": "email.syntax",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "test@@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "email_syntax_valid",
+    "category": "email",
+    "target_rule_id": "email.syntax",
+    "expect_issue": false,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "email_whitespace_safe",
+    "category": "whitespace",
+    "target_rule_id": "text.noncanonical_whitespace",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "  test@example.com  ",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "phone_tr_e164_noncanonical",
+    "category": "phone",
+    "target_rule_id": "phone.tr_e164",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "0532 123 45 67",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "phone_tr_e164_canonical",
+    "category": "phone",
+    "target_rule_id": "phone.tr_e164",
+    "expect_issue": false,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "phone_format_invalid_chars",
+    "category": "phone",
+    "target_rule_id": "phone.format",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "abc-phone",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "phone_incomplete_ambiguous",
+    "category": "phone",
+    "target_rule_id": "phone.tr_e164",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "0532123",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "location_unknown_city",
+    "category": "location",
+    "target_rule_id": "location.city_known",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "UnknownTown",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "location_known_city",
+    "category": "location",
+    "target_rule_id": "location.city_known",
+    "expect_issue": false,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "cross_field_city_district_mismatch",
+    "category": "cross_field",
+    "target_rule_id": "cross_field.city_district",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Çankaya",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "cross_field_city_district_valid",
+    "category": "cross_field",
+    "target_rule_id": "cross_field.city_district",
+    "expect_issue": false,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "Ankara",
+      "district": "Çankaya",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "text_blank_first_name",
+    "category": "text",
+    "target_rule_id": "text.blank",
+    "expect_issue": true,
+    "record": {
+      "first_name": "   ",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "company_too_short",
+    "category": "company",
+    "target_rule_id": "company.min_length",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "A",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "Bağdat Caddesi No:1"
+    }
+  },
+  {
+    "case_id": "address_too_short",
+    "category": "address",
+    "target_rule_id": "address.min_length",
+    "expect_issue": true,
+    "record": {
+      "first_name": "Ali",
+      "last_name": "Yılmaz",
+      "email": "ali@example.com",
+      "phone": "+905321234567",
+      "company": "Acme A.Ş.",
+      "city": "İstanbul",
+      "district": "Kadıköy",
+      "address": "1234"
+    }
+  }
+]

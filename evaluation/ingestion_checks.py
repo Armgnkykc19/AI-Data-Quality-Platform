@@ -17,6 +17,7 @@ def run_ingestion_smoke_checks(*, malformed_dir: Path) -> tuple[bool, list[str]]
         "missing_column_row.csv": {"accepted": 0, "rejected": 1},
         "extra_column_row.csv": {"accepted": 0, "rejected": 1},
         "header_only.csv": {"accepted": 0, "rejected": 0},
+        "broken_quotes.csv": {"accepted": 0, "rejected": 1},
     }
 
     passed = True

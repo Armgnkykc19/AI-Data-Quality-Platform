@@ -92,7 +92,37 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 03 (Input Parsing, Profiling & Data Contracts).
+Early development — Sprint 04 (Deterministic Validation & Normalization Engine).
+
+## Sprint 04
+
+Sprint 04 adds deterministic validation and normalization on top of parsed datasets.
+
+Current capabilities include:
+
+- modular validation rules with severity taxonomy (`validation/`),
+- modular normalization rules with transformation audit trail (`normalization/`),
+- validate → normalize → revalidate pipeline (`record_quality/`),
+- original-value preservation and idempotent normalizers,
+- Turkish Unicode preservation (no ASCII folding),
+- TR phone normalization to E.164,
+- email/company/location/address deterministic rules,
+- validation and normalization CLIs with JSON reports,
+- real normalization benchmark on golden dataset corruption log (partial product quality).
+
+Validate records:
+
+```bash
+python scripts/validate_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
+```
+
+Normalize records (does not overwrite source):
+
+```bash
+python scripts/normalize_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
+```
+
+Hard gates for entity resolution remain fixture smoke. Real `normalization_accuracy` is reported separately when running evaluation with `--dataset`.
 
 ## Sprint 03
 

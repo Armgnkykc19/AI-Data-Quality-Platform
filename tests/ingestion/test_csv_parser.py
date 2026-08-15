@@ -58,6 +58,46 @@ def test_quoted_delimiters(tmp_path: Path) -> None:
     assert parsed.rows[0].values["company"] == "Anadolu Teknoloji, A.S."
 
 
+def test_escaped_quotes_inside_quoted_field(tmp_path: Path) -> None:
+    path = tmp_path / "escaped.csv"
+    path.write_text(
+        'name,company\nAli,"Anadolu ""Best"" Teknoloji"\n',
+        encoding="utf-8",
+    )
+    parsed = parse_file(path)
+    assert parsed.accounting is not None
+    assert parsed.accounting.accepted_rows == 1
+    assert parsed.rows[0].values["company"] == 'Anadolu "Best" Teknoloji'
+
+
+def test_multiline_quoted_field_is_valid(tmp_path: Path) -> None:
+    path = tmp_path / "multiline.csv"
+    path.write_text(
+        'name,company\nAli,"Anadolu\nTeknoloji"\n',
+        encoding="utf-8",
+    )
+    parsed = parse_file(path)
+    assert parsed.accounting is not None
+    assert parsed.accounting.accepted_rows == 1
+    company = parsed.rows[0].values["company"]
+    assert company is not None
+    assert company.replace("\r\n", "\n") == "Anadolu\nTeknoloji"
+
+
+def test_broken_quotes_fixture_is_rejected(malformed_dir: Path) -> None:
+    parsed = parse_file(malformed_dir / "broken_quotes.csv")
+    assert parsed.accounting is not None
+    assert parsed.accounting.accepted_rows == 0
+    assert parsed.accounting.rejected_rows == 1
+    assert parsed.rejected_rows[0].reason_code == "unclosed_quote"
+
+
+def test_valid_quoted_field_still_parses(malformed_dir: Path) -> None:
+    parsed = parse_file(malformed_dir / "utf8_turkish.csv")
+    assert parsed.accounting is not None
+    assert parsed.accounting.accepted_rows == 1
+
+
 def test_cp1254_encoding(tmp_path: Path) -> None:
     path = tmp_path / "turkish.csv"
     path.write_text(

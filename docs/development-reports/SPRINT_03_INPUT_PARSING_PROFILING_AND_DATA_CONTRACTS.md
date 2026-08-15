@@ -22,6 +22,7 @@ evaluation/ingestion_checks.py
 - **CSV delimiters:** `,` and `;` with deterministic sample-based detection; single-column files default to comma
 - **Excel worksheet policy:** `first` — first worksheet is selected by default; metadata records `worksheet`, `worksheet_selection_policy`, and `available_worksheets`; explicit selection via CLI `--worksheet`
 - **Malformed rows:** rejected and accounted (`malformed_row: reject`)
+- **Unclosed quoted fields:** if CSV quote state is still open at EOF, the affected final logical row is rejected with `unclosed_quote` (no silent reinterpretation by `csv.reader`)
 - **Duplicate headers:** fatal error
 - **Empty file:** fatal error
 
@@ -54,7 +55,7 @@ Exit codes: `0` success, `1` ingestion error, `2` infrastructure error.
 
 ## Known Limitations
 
-See final audit report. Notable: `broken_quotes.csv` may parse without rejection; Excel truncates extra columns silently; openpyxl is dev-only dependency.
+See final audit report. Notable: Excel truncates extra columns silently; openpyxl is dev-only dependency.
 
 ## Definition of Done
 
