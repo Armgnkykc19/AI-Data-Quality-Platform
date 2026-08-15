@@ -92,4 +92,35 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 02 (Golden Dataset & Corruption Engine).
+Early development — Sprint 03 (Input Parsing, Profiling & Data Contracts).
+
+## Sprint 03
+
+Sprint 03 adds CSV/XLSX ingestion, row accounting, and deterministic profiling.
+
+Current capabilities include:
+
+- centralized ingestion configuration (`configs/ingestion.yaml`),
+- structured ingestion error taxonomy,
+- CSV parsing with delimiter/encoding detection,
+- XLSX parsing via openpyxl with explicit worksheet metadata,
+- zero silent row loss via row accounting invariant,
+- column and dataset profiling (completeness, uniqueness, type inference, patterns),
+- JSON/Markdown profiling reports,
+- CLI dataset profiling,
+- real ingestion smoke checks in the evaluation harness (opt-in via `--malformed-fixtures`).
+
+Profile an input file:
+
+```bash
+python scripts/profile_dataset.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
+python scripts/profile_dataset.py path/to/file.xlsx --worksheet SheetName
+```
+
+Run evaluation with dataset sanity and ingestion smoke:
+
+```bash
+python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+```
+
+The harness still runs in `FIXTURE_SMOKE` mode for hard gates. Ingestion smoke checks are real Sprint 03 signals but are not product-quality entity-resolution metrics.

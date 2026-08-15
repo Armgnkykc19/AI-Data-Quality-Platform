@@ -1,0 +1,46 @@
+version: "0.1.0"
+
+supported_extensions:
+  - ".csv"
+  - ".xlsx"
+
+csv:
+  enabled: true
+  supported_delimiters:
+    - ","
+    - ";"
+  delimiter_detection_sample_lines: 5
+  supported_encodings:
+    - "utf-8"
+    - "utf-8-sig"
+    - "cp1254"
+    - "iso-8859-9"
+  default_encoding: "utf-8"
+
+excel:
+  enabled: true
+  worksheet_selection: "first"
+  require_non_empty_sheet: true
+
+limits:
+  max_file_size_bytes: 52428800
+  max_row_count: 200000
+  max_column_count: 256
+
+policies:
+  empty_file: "error"
+  header_only: "allow"
+  duplicate_header: "error"
+  blank_header_cell: "error"
+  malformed_row: "reject"
+  entirely_blank_row: "reject"
+  empty_column: "allow"
+
+profiling:
+  sample_value_limit: 5
+  pattern_sample_limit: 1000
+
+reporting:
+  output_directory: ingestion/reports/latest
+  json: true
+  markdown: true

@@ -39,5 +39,24 @@ jobs:
       - name: Validate golden dataset CI smoke artifact
         run: python scripts/validate_dataset.py --dataset datasets/generated/ci-smoke/v0.1.0
 
+      - name: Profile CSV parser smoke
+        run: python scripts/profile_dataset.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
+
+      - name: Build XLSX parser smoke fixture and profile
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from openpyxl import Workbook
+          path = Path("datasets/generated/ci-smoke/smoke.xlsx")
+          path.parent.mkdir(parents=True, exist_ok=True)
+          wb = Workbook()
+          ws = wb.active
+          ws.title = "Customers"
+          ws.append(["name", "email"])
+          ws.append(["Ali", "ali@example.test"])
+          wb.save(path)
+          PY
+          python scripts/profile_dataset.py datasets/generated/ci-smoke/smoke.xlsx
+
       - name: Run evaluation smoke test
-        run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0
+        run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed

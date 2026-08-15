@@ -8,6 +8,7 @@ from evaluation.evaluator.hard_gates import (
     all_hard_gates_pass,
     evaluate_hard_gates,
 )
+from evaluation.ingestion_checks import run_ingestion_smoke_checks
 from evaluation.reporting import (
     EVALUATION_MODE_FIXTURE_SMOKE,
     PRODUCT_QUALITY_NOT_YET_AVAILABLE,
@@ -18,6 +19,7 @@ from evaluation.reporting import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "evaluation.yaml"
+DEFAULT_MALFORMED_DIR = PROJECT_ROOT / "datasets" / "golden" / "v0.1.0" / "malformed"
 
 
 def parse_args() -> argparse.Namespace:
@@ -38,6 +40,13 @@ def parse_args() -> argparse.Namespace:
             "Optional generated golden dataset path for oracle/sanity-check validation. "
             "Does not report oracle results as product hard-gate success."
         ),
+    )
+
+    parser.add_argument(
+        "--malformed-fixtures",
+        type=Path,
+        default=None,
+        help="Optional malformed fixture directory for real ingestion smoke checks.",
     )
 
     return parser.parse_args()
@@ -74,7 +83,11 @@ def run_dataset_sanity_checks(dataset_path: Path) -> tuple[bool, list[str]]:
     return True, messages
 
 
-def run_evaluation(config_path: Path, dataset_path: Path | None = None) -> int:
+def run_evaluation(
+    config_path: Path,
+    dataset_path: Path | None = None,
+    malformed_fixtures_path: Path | None = None,
+) -> int:
     try:
         config = load_config(config_path)
 
@@ -99,6 +112,22 @@ def run_evaluation(config_path: Path, dataset_path: Path | None = None) -> int:
                 print("Dataset Sanity Status: FAIL")
                 return 1
             print("Dataset Sanity Status: PASS (oracle/sanity-check only)")
+            print()
+
+        malformed_dir = malformed_fixtures_path
+        if malformed_dir is not None and malformed_dir.exists():
+            ingestion_passed, ingestion_messages = run_ingestion_smoke_checks(
+                malformed_dir=malformed_dir
+            )
+            print("Ingestion Smoke Checks (Real Sprint 03 Signals)")
+            print("------------------")
+            for message in ingestion_messages:
+                print(message)
+            print()
+            if not ingestion_passed:
+                print("Ingestion Smoke Status: FAIL")
+                return 1
+            print("Ingestion Smoke Status: PASS")
             print()
 
         print("Evaluation Harness")
@@ -171,7 +200,7 @@ def run_evaluation(config_path: Path, dataset_path: Path | None = None) -> int:
 def main() -> int:
     args = parse_args()
 
-    return run_evaluation(args.config, args.dataset)
+    return run_evaluation(args.config, args.dataset, args.malformed_fixtures)
 
 
 if __name__ == "__main__":
