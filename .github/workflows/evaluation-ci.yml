@@ -61,8 +61,68 @@ jobs:
       - name: Run evaluation smoke test
         run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
 
-      - name: Validation CLI smoke
-        run: python scripts/validate_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv --report-dir validation/reports/ci-smoke
+      - name: Build validation CLI smoke fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: Normalization CLI smoke
-        run: python scripts/normalize_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv --report-dir normalization/reports/ci-smoke
+          output_dir = Path("datasets/generated/ci-smoke")
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          positive = output_dir / "validation-positive-smoke.csv"
+          positive.write_text(
+              "first_name,last_name,email,phone,company,city,district,address\n"
+              "Ayşe,Yılmaz,ayse@example.com,+905321234567,Acme A.Ş.,İstanbul,Kadıköy,Bağdat Caddesi No:1\n",
+              encoding="utf-8",
+          )
+
+          negative = output_dir / "validation-negative-smoke.csv"
+          negative.write_text(
+              "first_name,last_name,email,phone,company,city,district,address\n"
+              "Ali,Kaya,broken@@example.com,+905321234567,Acme A.Ş.,İstanbul,Kadıköy,Test Sokak\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Validation CLI positive smoke
+        run: |
+          python scripts/validate_records.py datasets/generated/ci-smoke/validation-positive-smoke.csv --report-dir validation/reports/ci-positive-smoke
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected validation exit code 0 for valid fixture, got $exit_code"
+            exit 1
+          fi
+          echo "Validation correctly accepted valid fixture."
+
+      - name: Validation CLI negative smoke
+        run: |
+          set +e
+          python scripts/validate_records.py datasets/generated/ci-smoke/validation-negative-smoke.csv --report-dir validation/reports/ci-negative-smoke
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 1 ]; then
+            echo "Expected validation exit code 1 for invalid fixture, got $exit_code"
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report_path = Path("validation/reports/ci-negative-smoke/validation_report.json")
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          summary = report["summary"]
+          assert summary["invalid_records"] == 1, summary
+          assert summary["error_count"] >= 1, summary
+          print("Validation negative smoke report confirmed invalid record.")
+          PY
+          echo "Validation correctly rejected invalid fixture."
+
+      - name: Normalization CLI positive smoke
+        run: |
+          python scripts/normalize_records.py datasets/generated/ci-smoke/validation-positive-smoke.csv --report-dir normalization/reports/ci-positive-smoke
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected normalization exit code 0 for valid fixture, got $exit_code"
+            exit 1
+          fi
+          echo "Normalization CLI completed successfully for valid fixture."
