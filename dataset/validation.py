@@ -137,6 +137,41 @@ def validate_dataset(dataset_path: Path) -> ValidationResult:
                 )
             )
 
+    positive_pairs = summary.get("positive_pairs", [])
+    for pair in positive_pairs:
+        pair_type = pair.get("pair_type", "")
+        if (
+            pair_type in {"hard_positive", "duplicate"}
+            and pair["person_id_a"] != pair["person_id_b"]
+        ):
+            issues.append(
+                ValidationIssue(
+                    "error",
+                    "invalid_hard_positive",
+                    f"Hard-positive pair references different persons: {pair}",
+                )
+            )
+
+    hard_cases_dir = dataset_path / "hard_cases"
+    if hard_cases_dir.exists():
+        issues.extend(
+            _validate_hard_cases_csv(
+                csv_path=hard_cases_dir / "hard_positives.csv",
+                person_mappings=person_mappings,
+                pair_type="hard_positive",
+                positive_pairs=positive_pairs,
+            )
+        )
+        issues.extend(
+            _validate_hard_cases_csv(
+                csv_path=hard_cases_dir / "hard_negatives.csv",
+                person_mappings=person_mappings,
+                pair_type="hard_negative",
+                positive_pairs=[],
+                hard_negative_pairs=hard_negative_pairs,
+            )
+        )
+
     manifest_corruptions = Counter(manifest.get("corruption_counts", {}))
     log_path = dataset_path / "ground_truth" / "corruption_log.jsonl"
     if log_path.exists():
@@ -313,6 +348,111 @@ def _validate_source_csv(
                         "error",
                         "ground_truth_leakage",
                         "person_id must not appear in source CSV files",
+                    )
+                )
+
+    return issues
+
+
+def _validate_hard_cases_csv(
+    *,
+    csv_path: Path,
+    person_mappings: dict[str, str],
+    pair_type: str,
+    positive_pairs: list[dict[str, object]],
+    hard_negative_pairs: list[dict[str, object]] | None = None,
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    if not csv_path.exists():
+        issues.append(
+            ValidationIssue(
+                "error",
+                "missing_hard_cases_csv",
+                f"Missing hard cases CSV: {csv_path.name}",
+            )
+        )
+        return issues
+
+    seen_source_ids: set[str] = set()
+    with csv_path.open("r", encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
+        for row in reader:
+            source_record_id = row.get("source_record_id")
+            if not source_record_id:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "missing_source_record_id",
+                        f"Missing source_record_id in {csv_path.name}",
+                    )
+                )
+                continue
+            if source_record_id in seen_source_ids:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "duplicate_source_record_id",
+                        f"Duplicate source_record_id in {csv_path.name}: {source_record_id}",
+                    )
+                )
+            seen_source_ids.add(source_record_id)
+
+            if source_record_id not in person_mappings:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "unmapped_hard_case_record",
+                        f"No ground-truth mapping for hard case record: {source_record_id}",
+                    )
+                )
+            if "person_id" in row and row.get("person_id"):
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "ground_truth_leakage",
+                        f"person_id must not appear in hard cases CSV: {csv_path.name}",
+                    )
+                )
+
+    if pair_type == "hard_positive":
+        for pair in positive_pairs:
+            if pair.get("pair_type") != "hard_positive":
+                continue
+            for source_id in (pair["source_record_id_a"], pair["source_record_id_b"]):
+                if source_id not in seen_source_ids:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "missing_hard_positive_record",
+                            f"Hard-positive pair references missing CSV record: {source_id}",
+                        )
+                    )
+            if pair["person_id_a"] != pair["person_id_b"]:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "invalid_hard_positive",
+                        f"Hard-positive pair references different persons: {pair}",
+                    )
+                )
+
+    if pair_type == "hard_negative" and hard_negative_pairs is not None:
+        for pair in hard_negative_pairs:
+            for source_id in (pair["source_record_id_a"], pair["source_record_id_b"]):
+                if source_id not in seen_source_ids:
+                    issues.append(
+                        ValidationIssue(
+                            "error",
+                            "missing_hard_negative_record",
+                            f"Hard-negative pair references missing CSV record: {source_id}",
+                        )
+                    )
+            if pair["person_id_a"] == pair["person_id_b"]:
+                issues.append(
+                    ValidationIssue(
+                        "error",
+                        "invalid_hard_negative",
+                        f"Hard-negative pair references same person: {pair}",
                     )
                 )
 

@@ -66,6 +66,7 @@ temp/
 evaluation/reports/
 evaluation/results/
 evaluation/artifacts/
+ingestion/reports/
 
 # =========================
 # Local dataset artifacts
