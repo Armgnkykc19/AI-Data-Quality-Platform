@@ -1,10 +1,15 @@
 import json
 from pathlib import Path
+from typing import Any
 
 from evaluation.evaluator.hard_gates import HardGateResult
 
 EVALUATION_MODE_FIXTURE_SMOKE = "FIXTURE_SMOKE"
+EVALUATION_MODE_MIXED = "MIXED_DETERMINISTIC_NORMALIZATION"
 PRODUCT_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+PRODUCT_QUALITY_PARTIALLY_AVAILABLE = "PARTIALLY_AVAILABLE"
+ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 
 
 def build_report_data(
@@ -16,12 +21,16 @@ def build_report_data(
     overall_passed: bool,
     evaluation_mode: str = EVALUATION_MODE_FIXTURE_SMOKE,
     product_quality_evaluation: str = PRODUCT_QUALITY_NOT_YET_AVAILABLE,
+    real_validation_benchmark: dict[str, Any] | None = None,
+    real_normalization_benchmark: dict[str, Any] | None = None,
 ) -> dict:
     hard_gate_status = "PASS" if overall_passed else "FAIL"
 
-    return {
+    report: dict[str, Any] = {
         "evaluation_mode": evaluation_mode,
         "product_quality_evaluation": product_quality_evaluation,
+        "entity_resolution_quality": ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
+        "schema_mapping_quality": SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
         "hard_gate_status": hard_gate_status,
         "overall_infrastructure_status": hard_gate_status,
         "dataset": {
@@ -43,6 +52,13 @@ def build_report_data(
         "overall_status": hard_gate_status,
     }
 
+    if real_validation_benchmark is not None:
+        report["real_validation_benchmark"] = real_validation_benchmark
+    if real_normalization_benchmark is not None:
+        report["real_normalization_benchmark"] = real_normalization_benchmark
+
+    return report
+
 
 def write_json_report(report_data: dict, output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -60,6 +76,8 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
         "",
         f"**Evaluation Mode:** {report_data['evaluation_mode']}",
         f"**Product Quality Evaluation:** {report_data['product_quality_evaluation']}",
+        f"**Entity Resolution Quality:** {report_data['entity_resolution_quality']}",
+        f"**Schema Mapping Quality:** {report_data['schema_mapping_quality']}",
         f"**Dataset:** {report_data['dataset']['name']}",
         f"**Version:** {report_data['dataset']['version']}",
         f"**Hard Gate Status:** {report_data['hard_gate_status']}",
@@ -73,6 +91,58 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
 
     for metric_name, value in report_data["metrics"].items():
         lines.append(f"| {metric_name} | {value:.4f} |")
+
+    real_validation = report_data.get("real_validation_benchmark")
+    if isinstance(real_validation, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Validation Benchmark",
+                "",
+                f"**Positive Class:** {real_validation.get('positive_class_definition', '')}",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                f"| precision | {real_validation.get('precision', 0.0):.4f} |",
+                f"| recall | {real_validation.get('recall', 0.0):.4f} |",
+                f"| f1 | {real_validation.get('f1', 0.0):.4f} |",
+                f"| true_positives | {real_validation.get('true_positives', 0)} |",
+                f"| false_positives | {real_validation.get('false_positives', 0)} |",
+                f"| false_negatives | {real_validation.get('false_negatives', 0)} |",
+            ]
+        )
+
+    real_normalization = report_data.get("real_normalization_benchmark")
+    if isinstance(real_normalization, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Deterministic Normalization Benchmark",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                (
+                    f"| normalization_accuracy | "
+                    f"{real_normalization.get('normalization_accuracy', 0.0):.4f} |"
+                ),
+                (
+                    f"| expected_transformations | "
+                    f"{real_normalization.get('expected_transformations', 0)} |"
+                ),
+                (
+                    f"| correct_transformations | "
+                    f"{real_normalization.get('correct_transformations', 0)} |"
+                ),
+                (
+                    f"| missed_transformations | "
+                    f"{real_normalization.get('missed_transformations', 0)} |"
+                ),
+                (
+                    f"| incorrect_transformations | "
+                    f"{real_normalization.get('incorrect_transformations', 0)} |"
+                ),
+            ]
+        )
 
     lines.extend(
         [

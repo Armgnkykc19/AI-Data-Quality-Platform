@@ -136,6 +136,21 @@ def _is_entirely_blank(values: list[str | None]) -> bool:
     return all(value is None or str(value).strip() == "" for value in values)
 
 
+def _has_unclosed_quote_at_eof(text: str) -> bool:
+    """Return True when CSV quote state is still open at EOF (unclosed quoted field)."""
+    in_quotes = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            if in_quotes and index + 1 < len(text) and text[index + 1] == '"':
+                index += 2
+                continue
+            in_quotes = not in_quotes
+        index += 1
+    return in_quotes
+
+
 def parse_csv_file(path: Path, config: IngestionConfig) -> ParsedDataset:
     raw = _read_bytes(path, config)
     text, encoding = _decode_text(raw, config)
@@ -187,7 +202,31 @@ def parse_csv_file(path: Path, config: IngestionConfig) -> ParsedDataset:
             limit=config.max_row_count,
         )
 
+    unclosed_quote_at_eof = _has_unclosed_quote_at_eof(text)
+    last_data_row_number = len(data_rows) + 1
+
     for index, raw_row in enumerate(data_rows, start=2):
+        if unclosed_quote_at_eof and index == last_data_row_number:
+            dataset.rejected_rows.append(
+                RejectedRow(
+                    row_number=index,
+                    raw_values=tuple(raw_row),
+                    reason_code="unclosed_quote",
+                    message="Quoted field is not closed before end of file.",
+                )
+            )
+            dataset.issues.append(
+                ParseIssue(
+                    code="unclosed_quote",
+                    message=(
+                        f"Row {index} contains an unclosed quoted field; "
+                        "content must not be silently reinterpreted."
+                    ),
+                    severity="warning",
+                    row_number=index,
+                )
+            )
+            continue
         if _is_entirely_blank(raw_row):
             if config.entirely_blank_row_policy == "reject":
                 dataset.rejected_rows.append(

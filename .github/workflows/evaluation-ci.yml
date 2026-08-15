@@ -60,3 +60,9 @@ jobs:
 
       - name: Run evaluation smoke test
         run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+
+      - name: Validation CLI smoke
+        run: python scripts/validate_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv --report-dir validation/reports/ci-smoke
+
+      - name: Normalization CLI smoke
+        run: python scripts/normalize_records.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv --report-dir normalization/reports/ci-smoke

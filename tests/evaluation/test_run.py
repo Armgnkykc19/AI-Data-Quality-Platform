@@ -81,9 +81,9 @@ reporting:
     captured = capsys.readouterr()
 
     assert exit_code == 0
-    assert "Evaluation Mode: FIXTURE_SMOKE" in captured.out
-    assert "Product Quality Evaluation: NOT_YET_AVAILABLE" in captured.out
-    assert "Hard Gate Status: PASS" in captured.out
+    assert "Evaluation Mode: MIXED" in captured.out
+    assert "Product Quality Evaluation: PARTIALLY_AVAILABLE" in captured.out
+    assert "Infrastructure Hard Gates: PASS" in captured.out
     assert "Fixture Smoke Metrics (Infrastructure Only)" in captured.out
 
 
@@ -133,9 +133,9 @@ reporting:
     captured = capsys.readouterr()
 
     assert exit_code == 1
-    assert "Evaluation Mode: FIXTURE_SMOKE" in captured.out
-    assert "Hard Gate Status: FAIL" in captured.out
-    assert "Product Quality Evaluation: NOT_YET_AVAILABLE" in captured.out
+    assert "Evaluation Mode: MIXED" in captured.out
+    assert "Infrastructure Hard Gates: FAIL" in captured.out
+    assert "Product Quality Evaluation: PARTIALLY_AVAILABLE" in captured.out
 
 
 def test_run_evaluation_returns_two_for_missing_config(

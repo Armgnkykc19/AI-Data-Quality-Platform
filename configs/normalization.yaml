@@ -1,0 +1,66 @@
+version: "0.1.0"
+
+phone:
+  region: TR
+  target_format: E164
+
+rules:
+  text.trim_whitespace: true
+  text.collapse_whitespace: true
+  text.nfc_unicode: true
+  email.trim: true
+  email.lower_domain: true
+  phone.tr_e164: true
+  company.canonical_suffix: true
+  location.city_case: true
+  location.district_case: true
+  location.city_alias: true
+  location.district_alias: true
+  address.whitespace_cleanup: true
+
+whitespace:
+  trim: true
+  collapse_internal: true
+  unicode_form: NFC
+
+location:
+  city_aliases:
+    istanbul: İstanbul
+    ISTANBUL: İstanbul
+    ankara: Ankara
+    izmir: İzmir
+    bursa: Bursa
+    antalya: Antalya
+    adana: Adana
+    konya: Konya
+    gaziantep: Gaziantep
+    kocaeli: Kocaeli
+    mersin: Mersin
+  district_aliases:
+    kadikoy: Kadıköy
+    besiktas: Beşiktaş
+    cankaya: Çankaya
+    konak: Konak
+    nilufer: Nilüfer
+    muratpasa: Muratpaşa
+    seyhan: Seyhan
+    selcuklu: Selçuklu
+    sahinbey: Şahinbey
+    mezitli: Mezitli
+    izmit: İzmit
+
+company:
+  suffix_mappings:
+    "A.S.": "A.Ş."
+    "A.S": "A.Ş."
+    "AŞ": "A.Ş."
+    "A. S.": "A.Ş."
+    "A. S": "A.Ş."
+    "AS": "A.Ş."
+    "LTD. STI.": "Ltd. Şti."
+    "LTD STI": "Ltd. Şti."
+    "LTD. ŞTİ.": "Ltd. Şti."
+
+reporting:
+  output_directory: normalization/reports/latest
+  json: true
