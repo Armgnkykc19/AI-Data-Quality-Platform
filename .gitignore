@@ -69,6 +69,7 @@ evaluation/artifacts/
 ingestion/reports/
 validation/reports/
 normalization/reports/
+schema_mapping/reports/
 
 # =========================
 # Local dataset artifacts

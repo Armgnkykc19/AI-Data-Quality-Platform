@@ -1,0 +1,186 @@
+[
+  {
+    "case_id": "turkish_aliases_layout1",
+    "category": "exact_turkish_alias",
+    "headers": ["ad", "soyad", "e_mail", "gsm", "sirket", "sehir", "ilce", "adres"],
+    "rows": [
+      ["Ayse", "Yilmaz", "ayse@example.com", "05321234567", "Acme", "Istanbul", "Kadikoy", "Test Sokak"]
+    ],
+    "expected": {
+      "ad": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "soyad": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+      "e_mail": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "gsm": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+      "sirket": {"canonical_field": "company", "decision": "AUTO_MAP"},
+      "sehir": {"canonical_field": "city", "decision": "AUTO_MAP"},
+      "ilce": {"canonical_field": "district", "decision": "AUTO_MAP"},
+      "adres": {"canonical_field": "address", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "english_aliases_layout2",
+    "category": "exact_english_alias",
+    "headers": ["given_name", "surname", "email_address", "mobile", "organization", "il", "mahalle", "street"],
+    "rows": [
+      ["Ali", "Kaya", "ali@example.com", "05321234567", "Acme", "Istanbul", "Kadikoy", "Test Sokak"]
+    ],
+    "expected": {
+      "given_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "surname": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+      "email_address": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "mobile": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+      "organization": {"canonical_field": "company", "decision": "AUTO_MAP"},
+      "il": {"canonical_field": "city", "decision": "AUTO_MAP"},
+      "mahalle": {"canonical_field": "district", "decision": "AUTO_MAP"},
+      "street": {"canonical_field": "address", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "casing_and_spacing",
+    "category": "header_normalization",
+    "headers": ["First Name", "E-Posta Adresi", "CEP TELEFONU"],
+    "rows": [
+      ["Ayse", "ayse@example.com", "05321234567"]
+    ],
+    "expected": {
+      "First Name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "E-Posta Adresi": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "CEP TELEFONU": {"canonical_field": "phone", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "unknown_notes_unmapped",
+    "category": "unmapped_preservation",
+    "headers": ["first_name", "last_name", "email", "notes", "legacy_status"],
+    "rows": [
+      ["Ali", "Kaya", "ali@example.com", "VIP customer", "active"]
+    ],
+    "expected": {
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "last_name": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+      "email": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "notes": {"canonical_field": null, "decision": "UNMAPPED"},
+      "legacy_status": {"canonical_field": null, "decision": "UNMAPPED"}
+    }
+  },
+  {
+    "case_id": "ambiguous_contact_review",
+    "category": "ambiguous_header",
+    "headers": ["contact", "first_name", "last_name"],
+    "rows": [
+      ["ali@example.com", "Ali", "Kaya"]
+    ],
+    "expected": {
+      "contact": {"canonical_field": "email", "decision": "REVIEW"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "last_name": {"canonical_field": "last_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "pattern_dominant_email_contact",
+    "category": "pattern_evidence",
+    "headers": ["contact", "first_name"],
+    "rows": [
+      ["ali@example.com", "Ali"],
+      ["ayse@example.com", "Ayse"],
+      ["veli@example.com", "Veli"]
+    ],
+    "expected": {
+      "contact": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "email_phone_collision",
+    "category": "collision",
+    "headers": ["email", "email_2", "first_name"],
+    "rows": [
+      ["ali@example.com", "backup@example.com", "Ali"]
+    ],
+    "expected": {
+      "email": {"canonical_field": "email", "decision": "CONFLICT"},
+      "email_2": {"canonical_field": "email", "decision": "CONFLICT"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "header_phone_numeric_conflict",
+    "category": "type_pattern_conflict",
+    "headers": ["phone", "first_name"],
+    "rows": [
+      ["12345", "Ali"],
+      ["67890", "Ayse"]
+    ],
+    "expected": {
+      "phone": {"canonical_field": "phone", "decision": "REVIEW"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "company_name_lexical",
+    "category": "lexical_near_match",
+    "headers": ["company_name", "first_name", "last_name", "email", "phone", "city", "district", "address"],
+    "rows": [
+      ["Acme AS", "Ali", "Kaya", "ali@example.com", "05321234567", "Istanbul", "Kadikoy", "Test Sokak"]
+    ],
+    "expected": {
+      "company_name": {"canonical_field": "company", "decision": "REVIEW"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "last_name": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+      "email": {"canonical_field": "email", "decision": "AUTO_MAP"},
+      "phone": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+      "city": {"canonical_field": "city", "decision": "AUTO_MAP"},
+      "district": {"canonical_field": "district", "decision": "AUTO_MAP"},
+      "address": {"canonical_field": "address", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "location_ambiguous_review",
+    "category": "ambiguous_header",
+    "headers": ["location", "first_name"],
+    "rows": [
+      ["Istanbul", "Ali"]
+    ],
+    "expected": {
+      "location": {"canonical_field": "city", "decision": "REVIEW"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "mixed_contact_close_scores",
+    "category": "close_score_ambiguity",
+    "headers": ["contact", "first_name"],
+    "rows": [
+      ["ali@example.com", "Ali"],
+      ["05321234567", "Ayse"]
+    ],
+    "expected": {
+      "contact": {"canonical_field": "email", "decision": "UNMAPPED"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  },
+  {
+    "case_id": "unknown_business_field",
+    "category": "unmapped_preservation",
+    "headers": ["first_name", "crm_pipeline_stage"],
+    "rows": [
+      ["Ali", "negotiation"]
+    ],
+    "expected": {
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+      "crm_pipeline_stage": {"canonical_field": null, "decision": "UNMAPPED"}
+    }
+  },
+  {
+    "case_id": "tel_mail_ambiguous_header",
+    "category": "ambiguous_header",
+    "headers": ["tel_mail", "first_name"],
+    "rows": [
+      ["ali@example.com", "Ali"]
+    ],
+    "expected": {
+      "tel_mail": {"canonical_field": "email", "decision": "REVIEW"},
+      "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"}
+    }
+  }
+]

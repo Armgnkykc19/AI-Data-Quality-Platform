@@ -25,7 +25,23 @@ def test_missing_worksheet_raises(sample_xlsx: Path) -> None:
         parse_file(sample_xlsx, worksheet_name="Missing")
 
 
-def test_empty_sheet_workbook(tmp_path: Path) -> None:
+def test_extra_column_row_is_rejected(tmp_path: Path) -> None:
+    pytest.importorskip("openpyxl")
+    from openpyxl import Workbook
+
+    path = tmp_path / "extra_col.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["name", "email"])
+    sheet.append(["Ali", "ali@example.test", "extra-value"])
+    workbook.save(path)
+
+    parsed = parse_file(path)
+    assert parsed.accounting is not None
+    assert parsed.accounting.accepted_rows == 0
+    assert parsed.accounting.rejected_rows == 1
+    assert parsed.rejected_rows[0].reason_code == "inconsistent_column_count"
+
     pytest.importorskip("openpyxl")
     from openpyxl import Workbook
 
