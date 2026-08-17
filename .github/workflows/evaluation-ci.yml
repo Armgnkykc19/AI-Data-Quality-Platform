@@ -126,3 +126,60 @@ jobs:
             exit 1
           fi
           echo "Normalization CLI completed successfully for valid fixture."
+
+      - name: Build schema mapping smoke fixtures
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          output_dir = Path("datasets/generated/ci-smoke")
+          output_dir.mkdir(parents=True, exist_ok=True)
+
+          positive = output_dir / "mapping-positive-smoke.csv"
+          positive.write_text(
+              "ad,soyad,e_mail,gsm,sirket,sehir,ilce,adres\n"
+              "Ayse,Yilmaz,ayse@example.com,05321234567,Acme AS,Istanbul,Kadikoy,Test Sokak\n",
+              encoding="utf-8",
+          )
+
+          ambiguous = output_dir / "mapping-ambiguous-smoke.csv"
+          ambiguous.write_text(
+              "contact,first_name,last_name\n"
+              "ali@example.com,Ali,Kaya\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Schema mapping CLI positive smoke
+        run: |
+          python scripts/map_schema.py datasets/generated/ci-smoke/mapping-positive-smoke.csv --report-dir schema_mapping/reports/ci-positive-smoke
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected schema mapping exit code 0, got $exit_code"
+            exit 1
+          fi
+          echo "Schema mapping positive smoke completed."
+
+      - name: Schema mapping CLI ambiguous smoke
+        run: |
+          python scripts/map_schema.py datasets/generated/ci-smoke/mapping-ambiguous-smoke.csv --report-dir schema_mapping/reports/ci-ambiguous-smoke
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected schema mapping exit code 0 for plan generation, got $exit_code"
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("schema_mapping/reports/ci-ambiguous-smoke/mapping_report.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          contact = next(
+              item for item in report["column_mappings"] if item["source_column"] == "contact"
+          )
+          assert contact["decision"] == "REVIEW", contact
+          print("Schema mapping ambiguous smoke confirmed REVIEW routing.")
+          PY

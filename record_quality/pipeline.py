@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from ingestion.config import load_ingestion_config
 from ingestion.models import ParsedDataset
 from normalization.config import NormalizationConfig, load_normalization_config
 from normalization.engine import NormalizationEngine
 from normalization.pipeline import field_eligibility_from_validation
+from profiling.profiler import profile_dataset
 from record_quality.models import DatasetQualityResult, RecordQualityState
+from schema_mapping.apply import apply_mapping_plan
+from schema_mapping.engine import build_mapping_plan
 from validation.config import ValidationConfig, load_validation_config
 from validation.engine import ValidationEngine
 from validation.models import ValidationSummary
-from validation.pipeline import map_row_to_canonical, validate_parsed_dataset
+from validation.pipeline import validate_parsed_dataset
 
 
 def _build_summary(records: list) -> ValidationSummary:
@@ -37,13 +41,21 @@ def run_quality_pipeline(
     validation_engine = ValidationEngine(val_config)
     normalization_engine = NormalizationEngine(norm_config)
 
+    ingestion_config = load_ingestion_config()
+    profile = profile_dataset(parsed, ingestion_config)
+    mapping_plan = build_mapping_plan(parsed, profile=profile)
+    applied = apply_mapping_plan(parsed, mapping_plan)
+    canonical_by_row = {
+        record.row_number: record.canonical_values for record in applied.records
+    }
+
     pre_results = []
     quality_records: list[RecordQualityState] = []
     total_transformations = 0
     changed_records = 0
 
     for row in parsed.rows:
-        canonical = map_row_to_canonical(row, parsed.headers)
+        canonical = canonical_by_row[row.row_number]
         pre_validation = validation_engine.validate_record(
             canonical,
             row_number=row.row_number,

@@ -5,11 +5,12 @@ from typing import Any
 from evaluation.evaluator.hard_gates import HardGateResult
 
 EVALUATION_MODE_FIXTURE_SMOKE = "FIXTURE_SMOKE"
-EVALUATION_MODE_MIXED = "MIXED_DETERMINISTIC_NORMALIZATION"
+EVALUATION_MODE_MIXED = "MIXED"
 PRODUCT_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 PRODUCT_QUALITY_PARTIALLY_AVAILABLE = "PARTIALLY_AVAILABLE"
 ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+SCHEMA_MAPPING_QUALITY_AVAILABLE = "AVAILABLE"
 
 
 def build_report_data(
@@ -23,6 +24,9 @@ def build_report_data(
     product_quality_evaluation: str = PRODUCT_QUALITY_NOT_YET_AVAILABLE,
     real_validation_benchmark: dict[str, Any] | None = None,
     real_normalization_benchmark: dict[str, Any] | None = None,
+    real_schema_mapping_benchmark: dict[str, Any] | None = None,
+    real_source_b_mapping_benchmark: dict[str, Any] | None = None,
+    schema_mapping_quality: str = SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
 ) -> dict:
     hard_gate_status = "PASS" if overall_passed else "FAIL"
 
@@ -30,7 +34,7 @@ def build_report_data(
         "evaluation_mode": evaluation_mode,
         "product_quality_evaluation": product_quality_evaluation,
         "entity_resolution_quality": ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
-        "schema_mapping_quality": SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
+        "schema_mapping_quality": schema_mapping_quality,
         "hard_gate_status": hard_gate_status,
         "overall_infrastructure_status": hard_gate_status,
         "dataset": {
@@ -56,6 +60,10 @@ def build_report_data(
         report["real_validation_benchmark"] = real_validation_benchmark
     if real_normalization_benchmark is not None:
         report["real_normalization_benchmark"] = real_normalization_benchmark
+    if real_schema_mapping_benchmark is not None:
+        report["real_schema_mapping_benchmark"] = real_schema_mapping_benchmark
+    if real_source_b_mapping_benchmark is not None:
+        report["real_source_b_mapping_benchmark"] = real_source_b_mapping_benchmark
 
     return report
 
@@ -140,6 +148,30 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
                 (
                     f"| incorrect_transformations | "
                     f"{real_normalization.get('incorrect_transformations', 0)} |"
+                ),
+            ]
+        )
+
+    real_schema_mapping = report_data.get("real_schema_mapping_benchmark")
+    if isinstance(real_schema_mapping, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Schema Mapping Benchmark",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                f"| mapping_accuracy | {real_schema_mapping.get('mapping_accuracy', 0.0):.4f} |",
+                f"| precision | {real_schema_mapping.get('precision', 0.0):.4f} |",
+                f"| recall | {real_schema_mapping.get('recall', 0.0):.4f} |",
+                f"| f1 | {real_schema_mapping.get('f1', 0.0):.4f} |",
+                (
+                    f"| auto_map_precision | "
+                    f"{real_schema_mapping.get('auto_map_precision', 0.0):.4f} |"
+                ),
+                (
+                    f"| review_routing_recall | "
+                    f"{real_schema_mapping.get('review_routing_recall', 0.0):.4f} |"
                 ),
             ]
         )

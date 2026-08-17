@@ -92,7 +92,41 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 04 (Deterministic Validation & Normalization Engine).
+Early development — Sprint 05 (Schema Mapping Intelligence).
+
+## Sprint 05
+
+Sprint 05 adds deterministic, explainable source-to-canonical schema mapping.
+
+Current capabilities include:
+
+- `schema_mapping/` package with separated decision and application layers,
+- config-driven aliases and evidence weights (`configs/schema_mapping.yaml`),
+- canonical schema integration via `configs/canonical_schema.yaml`,
+- header preprocessing with Turkish Unicode support,
+- evidence-based scoring (alias, lexical, type, pattern, profile),
+- AUTO_MAP / REVIEW / UNMAPPED / CONFLICT decisions with ambiguity margin and collision handling,
+- `MappingPlan` JSON reports with evidence and alternatives,
+- mapping application preserving source lineage and unmapped columns,
+- integration with Sprint 04 validation/normalization pipelines,
+- real schema mapping benchmark (`evaluation/schema_mapping_benchmark.py`),
+- schema mapping CLI (`scripts/map_schema.py`),
+- XLSX extra-column silent truncation fixed (rows rejected instead).
+
+Map source columns:
+
+```bash
+python scripts/map_schema.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
+python scripts/map_schema.py input.csv --apply
+```
+
+Run evaluation with real schema mapping metrics:
+
+```bash
+python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+```
+
+Fixture `schema_mapping_accuracy` remains infrastructure smoke; real mapping metrics are reported separately.
 
 ## Sprint 04
 

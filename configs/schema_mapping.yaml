@@ -1,0 +1,120 @@
+version: "0.1.0"
+description: Deterministic schema mapping configuration for Sprint 05.
+
+canonical_schema_path: configs/canonical_schema.yaml
+
+# Canonical fields eligible for automatic header mapping.
+mappable_fields:
+  - first_name
+  - last_name
+  - email
+  - phone
+  - company
+  - city
+  - district
+  - address
+
+# Fields present in canonical schema but not auto-mapped from arbitrary headers.
+non_auto_mappable_fields:
+  - person_id
+  - source_record_id
+  - source_name
+
+aliases:
+  first_name:
+    - ad
+    - isim
+    - first_name
+    - firstname
+    - given_name
+  last_name:
+    - soyad
+    - soyisim
+    - last_name
+    - lastname
+    - surname
+  email:
+    - email
+    - eposta
+    - e_posta
+    - e-posta
+    - e_posta_adresi
+    - mail
+    - email_address
+  phone:
+    - telefon
+    - tel
+    - cep
+    - cep_telefonu
+    - cep telefonu
+    - phone
+    - mobile
+    - gsm
+  company:
+    - firma
+    - sirket
+    - şirket
+    - company
+    - organization
+  city:
+    - sehir
+    - şehir
+    - il
+    - city
+    - city_name
+  district:
+    - ilce
+    - ilçe
+    - mahalle
+    - district
+  address:
+    - adres
+    - address
+    - street
+    - full_address
+
+# Headers that are inherently ambiguous; lexical-only evidence cannot AUTO_MAP.
+ambiguous_headers:
+  - contact
+  - info
+  - customer
+  - tel_mail
+  - location
+  - name
+  - data
+
+scoring:
+  weights:
+    exact_alias: 0.95
+    lexical_similarity: 0.35
+    type_compatibility: 0.12
+    type_incompatibility: -0.25
+    pattern_email: 0.40
+    pattern_phone: 0.40
+    pattern_numeric: -0.15
+    completeness: 0.05
+    uniqueness: 0.03
+  conflict_penalty: 0.20
+
+thresholds:
+  auto_map: 0.90
+  review: 0.60
+  ambiguity_margin: 0.08
+  lexical_minimum: 0.55
+  pattern_dominance: 0.85
+  pattern_auto_map_support: 0.90
+
+type_compatibility:
+  first_name: [string]
+  last_name: [string]
+  email: [string]
+  phone: [string]
+  company: [string]
+  city: [string]
+  district: [string]
+  address: [string]
+
+reporting:
+  output_directory: schema_mapping/reports/latest
+  json: true
+  markdown: true

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from ingestion.config import load_ingestion_config
 from ingestion.models import ParsedDataset
 from normalization.config import NormalizationConfig, load_normalization_config
 from normalization.engine import ALL_NORMALIZABLE_FIELDS, NormalizationEngine
 from normalization.models import DatasetNormalizationResult
+from profiling.profiler import profile_dataset
+from schema_mapping.apply import apply_mapping_plan
+from schema_mapping.engine import build_mapping_plan
 from validation.eligibility import BLOCKING_ELIGIBILITIES
 from validation.models import NormalizationEligibility, RecordValidationResult, Severity
-from validation.pipeline import map_row_to_canonical
 
 
 def field_eligibility_from_validation(
@@ -56,12 +59,20 @@ def normalize_parsed_dataset(
         item.row_number: item for item in (validation_results or [])
     }
 
+    ingestion_config = load_ingestion_config()
+    profile = profile_dataset(parsed, ingestion_config)
+    mapping_plan = build_mapping_plan(parsed, profile=profile)
+    applied = apply_mapping_plan(parsed, mapping_plan)
+    canonical_by_row = {
+        record.row_number: record.canonical_values for record in applied.records
+    }
+
     records = []
     changed_records = 0
     total_transformations = 0
 
     for row in parsed.rows:
-        canonical = map_row_to_canonical(row, parsed.headers)
+        canonical = canonical_by_row[row.row_number]
         validation_result = validation_by_row.get(row.row_number)
         field_eligibility = (
             field_eligibility_from_validation(validation_result)

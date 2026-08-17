@@ -72,6 +72,14 @@ SOURCE_B_COLUMN_SETS = [
     ],
 ]
 
+SOURCE_B_UNMAPPED_COLUMNS = frozenset(
+    {
+        "legacy_code",
+        "import_batch",
+        "notes",
+    }
+)
+
 SOURCE_B_FIELD_MAP = {
     "ad": "first_name",
     "given_name": "first_name",
@@ -98,6 +106,18 @@ SOURCE_B_FIELD_MAP = {
     "street": "address",
     "address": "address",
 }
+
+
+def source_b_expected_mapping(column: str) -> tuple[str | None, str]:
+    """Independent Source B ground truth from generator metadata (not mapper output)."""
+    if column in {"source_record_id", "source_name"}:
+        return None, "UNMAPPED"
+    if column in SOURCE_B_UNMAPPED_COLUMNS:
+        return None, "UNMAPPED"
+    canonical_field = SOURCE_B_FIELD_MAP.get(column)
+    if canonical_field is not None:
+        return canonical_field, "AUTO_MAP"
+    return None, "UNMAPPED"
 
 
 def _format_source_record_id(source_name: str, index: int) -> str:

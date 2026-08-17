@@ -17,11 +17,14 @@ from evaluation.reporting import (
     EVALUATION_MODE_MIXED,
     PRODUCT_QUALITY_NOT_YET_AVAILABLE,
     PRODUCT_QUALITY_PARTIALLY_AVAILABLE,
+    SCHEMA_MAPPING_QUALITY_AVAILABLE,
     SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
     build_report_data,
     write_json_report,
     write_markdown_report,
 )
+from evaluation.schema_mapping_benchmark import run_schema_mapping_benchmark
+from evaluation.source_b_mapping_benchmark import run_source_b_mapping_benchmark
 from evaluation.validation_benchmark import (
     failures_to_dict,
     run_validation_benchmark,
@@ -122,12 +125,59 @@ def _normalization_benchmark_to_dict(result) -> dict[str, Any]:
     }
 
 
+def _schema_mapping_benchmark_to_dict(result) -> dict[str, Any]:
+    return {
+        "labeled_case_count": result.labeled_case_count,
+        "labeled_column_count": result.labeled_column_count,
+        "correct_mappings": result.correct_mappings,
+        "incorrect_mappings": result.incorrect_mappings,
+        "missed_mappings": result.missed_mappings,
+        "precision": result.precision,
+        "recall": result.recall,
+        "f1": result.f1,
+        "mapping_accuracy": result.mapping_accuracy,
+        "auto_map_total": result.auto_map_total,
+        "auto_map_correct": result.auto_map_correct,
+        "auto_map_incorrect": result.auto_map_incorrect,
+        "auto_map_precision": result.auto_map_precision,
+        "expected_review_count": result.expected_review_count,
+        "correct_review_routing": result.correct_review_routing,
+        "review_routing_recall": result.review_routing_recall,
+        "expected_unmapped_count": result.expected_unmapped_count,
+        "correct_unmapped": result.correct_unmapped,
+        "failures_by_category": result.failures_by_category,
+        "passed": result.passed,
+    }
+
+
+def _source_b_mapping_benchmark_to_dict(result) -> dict[str, Any]:
+    return {
+        "layout_count": result.layout_count,
+        "labeled_column_count": result.labeled_column_count,
+        "correct_mappings": result.correct_mappings,
+        "incorrect_mappings": result.incorrect_mappings,
+        "missed_mappings": result.missed_mappings,
+        "precision": result.precision,
+        "recall": result.recall,
+        "f1": result.f1,
+        "mapping_accuracy": result.mapping_accuracy,
+        "auto_map_total": result.auto_map_total,
+        "auto_map_correct": result.auto_map_correct,
+        "auto_map_incorrect": result.auto_map_incorrect,
+        "auto_map_precision": result.auto_map_precision,
+        "expected_unmapped_count": result.expected_unmapped_count,
+        "correct_unmapped": result.correct_unmapped,
+        "passed": result.passed,
+    }
+
+
 def _resolve_evaluation_labels(
     *,
     validation_available: bool,
     normalization_available: bool,
+    schema_mapping_available: bool,
 ) -> tuple[str, str]:
-    if validation_available or normalization_available:
+    if validation_available or normalization_available or schema_mapping_available:
         return EVALUATION_MODE_MIXED, PRODUCT_QUALITY_PARTIALLY_AVAILABLE
     return EVALUATION_MODE_FIXTURE_SMOKE, PRODUCT_QUALITY_NOT_YET_AVAILABLE
 
@@ -233,9 +283,69 @@ def run_evaluation(
             )
             print()
 
+        schema_mapping_benchmark = run_schema_mapping_benchmark()
+        schema_mapping_available = schema_mapping_benchmark.ran_successfully
+        if schema_mapping_available:
+            print("Real Schema Mapping Benchmark")
+            print("------------------")
+            print(f"labeled_case_count: {schema_mapping_benchmark.labeled_case_count}")
+            print(f"labeled_column_count: {schema_mapping_benchmark.labeled_column_count}")
+            print(f"correct_mappings: {schema_mapping_benchmark.correct_mappings}")
+            print(f"incorrect_mappings: {schema_mapping_benchmark.incorrect_mappings}")
+            print(f"missed_mappings: {schema_mapping_benchmark.missed_mappings}")
+            print(f"precision: {schema_mapping_benchmark.precision:.4f}")
+            print(f"recall: {schema_mapping_benchmark.recall:.4f}")
+            print(f"f1: {schema_mapping_benchmark.f1:.4f}")
+            print(f"mapping_accuracy: {schema_mapping_benchmark.mapping_accuracy:.4f}")
+            print(
+                f"auto_map_precision: {schema_mapping_benchmark.auto_map_precision:.4f}"
+            )
+            print(
+                f"review_routing_recall: "
+                f"{schema_mapping_benchmark.review_routing_recall:.4f}"
+            )
+            print(
+                "schema_mapping_benchmark: "
+                f"{'PASS' if schema_mapping_benchmark.passed else 'FAIL'}"
+            )
+            print()
+        elif schema_mapping_benchmark.error_message:
+            print("Real Schema Mapping Benchmark")
+            print("------------------")
+            print(
+                f"schema_mapping_benchmark: ERROR ({schema_mapping_benchmark.error_message})"
+            )
+            print()
+
+        source_b_mapping_benchmark = run_source_b_mapping_benchmark()
+        if source_b_mapping_benchmark.ran_successfully:
+            print("Real Source B Schema Mapping Benchmark")
+            print("------------------")
+            print(f"layout_count: {source_b_mapping_benchmark.layout_count}")
+            print(f"labeled_column_count: {source_b_mapping_benchmark.labeled_column_count}")
+            print(f"correct_mappings: {source_b_mapping_benchmark.correct_mappings}")
+            print(f"mapping_accuracy: {source_b_mapping_benchmark.mapping_accuracy:.4f}")
+            print(
+                f"auto_map_precision: {source_b_mapping_benchmark.auto_map_precision:.4f}"
+            )
+            print(
+                "source_b_mapping_benchmark: "
+                f"{'PASS' if source_b_mapping_benchmark.passed else 'FAIL'}"
+            )
+            print()
+        elif source_b_mapping_benchmark.error_message:
+            print("Real Source B Schema Mapping Benchmark")
+            print("------------------")
+            print(
+                "source_b_mapping_benchmark: ERROR "
+                f"({source_b_mapping_benchmark.error_message})"
+            )
+            print()
+
         evaluation_mode, product_quality = _resolve_evaluation_labels(
             validation_available=validation_available,
             normalization_available=normalization_available,
+            schema_mapping_available=schema_mapping_available,
         )
 
         print("Evaluation Harness")
@@ -268,6 +378,21 @@ def run_evaluation(
                 "(source: golden_dataset_corruption_log)"
             )
 
+        if schema_mapping_available:
+            print()
+            print("Real Schema Mapping Benchmark Metrics")
+            print("------------------")
+            print(f"mapping_accuracy: {schema_mapping_benchmark.mapping_accuracy:.4f}")
+            print(f"precision: {schema_mapping_benchmark.precision:.4f}")
+            print(f"recall: {schema_mapping_benchmark.recall:.4f}")
+            print(f"f1: {schema_mapping_benchmark.f1:.4f}")
+            print(f"auto_map_precision: {schema_mapping_benchmark.auto_map_precision:.4f}")
+            print(
+                "review_routing_recall: "
+                f"{schema_mapping_benchmark.review_routing_recall:.4f} "
+                "(source: labeled mapping benchmark cases)"
+            )
+
         print()
         print("Hard Gates (Fixture Smoke)")
         print("------------------")
@@ -298,6 +423,21 @@ def run_evaluation(
                 if normalization_available and normalization_benchmark is not None
                 else None
             ),
+            real_schema_mapping_benchmark=(
+                _schema_mapping_benchmark_to_dict(schema_mapping_benchmark)
+                if schema_mapping_available
+                else None
+            ),
+            real_source_b_mapping_benchmark=(
+                _source_b_mapping_benchmark_to_dict(source_b_mapping_benchmark)
+                if source_b_mapping_benchmark.ran_successfully
+                else None
+            ),
+            schema_mapping_quality=(
+                SCHEMA_MAPPING_QUALITY_AVAILABLE
+                if schema_mapping_available
+                else SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE
+            ),
         )
 
         output_directory = PROJECT_ROOT / config["reporting"]["output_directory"]
@@ -315,7 +455,12 @@ def run_evaluation(
         print(f"Overall Infrastructure Status: {hard_gate_status}")
         print(f"Product Quality Evaluation: {product_quality}")
         print(f"Entity Resolution Quality: {ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE}")
-        print(f"Schema Mapping Quality: {SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE}")
+        schema_quality = (
+            SCHEMA_MAPPING_QUALITY_AVAILABLE
+            if schema_mapping_available
+            else SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE
+        )
+        print(f"Schema Mapping Quality: {schema_quality}")
 
         if overall_passed:
             return 0

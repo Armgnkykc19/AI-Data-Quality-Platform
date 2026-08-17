@@ -13,7 +13,7 @@ from ingestion.errors import (
     WorkbookError,
     WorksheetNotFound,
 )
-from ingestion.models import ParsedDataset, ParsedRow, RejectedRow, SourceMetadata
+from ingestion.models import ParsedDataset, ParsedRow, ParseIssue, RejectedRow, SourceMetadata
 
 
 def _cell_to_str(value: object | None) -> str | None:
@@ -107,6 +107,8 @@ def parse_xlsx_file(
         return dataset
 
     headers = [_cell_to_str(value) or "" for value in header_row]
+    while headers and headers[-1] == "":
+        headers.pop()
     if not any(header.strip() for header in headers):
         workbook.close()
         raise MissingHeader(code="missing_header", message="Worksheet is missing a header row.")
@@ -141,12 +143,37 @@ def parse_xlsx_file(
     dataset.headers = headers
     data_row_count = 0
     row_number = 1
+    observed_max_column_count = len(headers)
     for raw_row in rows_iter:
         row_number += 1
         values_list = [_cell_to_str(value) for value in raw_row]
+        observed_max_column_count = max(observed_max_column_count, len(values_list))
         if len(values_list) < len(headers):
             values_list.extend([None] * (len(headers) - len(values_list)))
         elif len(values_list) > len(headers):
+            if config.malformed_row_policy == "reject":
+                dataset.rejected_rows.append(
+                    RejectedRow(
+                        row_number=row_number,
+                        raw_values=tuple("" if value is None else value for value in values_list),
+                        reason_code="inconsistent_column_count",
+                        message=(
+                            f"Expected {len(headers)} columns, found {len(values_list)}."
+                        ),
+                    )
+                )
+                dataset.issues.append(
+                    ParseIssue(
+                        code="inconsistent_column_count",
+                        message=(
+                            f"Row {row_number} has {len(values_list)} columns; "
+                            f"expected {len(headers)}."
+                        ),
+                        severity="warning",
+                        row_number=row_number,
+                    )
+                )
+                continue
             values_list = values_list[: len(headers)]
 
         if _is_entirely_blank(values_list):
