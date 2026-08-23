@@ -71,6 +71,7 @@ validation/reports/
 normalization/reports/
 schema_mapping/reports/
 entity_resolution/reports/
+survivorship/reports/
 
 # =========================
 # Local dataset artifacts

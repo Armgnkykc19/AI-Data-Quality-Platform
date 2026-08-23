@@ -5,6 +5,8 @@ dataset:
 evaluation:
   entity_resolution:
     enabled: true
+  survivorship:
+    enabled: true
   schema_mapping:
     enabled: true
   normalization:
