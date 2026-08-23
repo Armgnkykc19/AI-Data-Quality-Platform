@@ -1,0 +1,50 @@
+version: "0.1.0"
+description: Deterministic survivorship configuration for Sprint 07.
+
+identity_fields:
+  - first_name
+  - last_name
+  - email
+  - phone
+  - company
+  - city
+  - district
+  - address
+
+forbidden_fields:
+  - person_id
+
+source_priority:
+  source_a: 1
+  source_b: 2
+  source_c: 3
+  hard_positive: 4
+  hard_negative: 5
+
+field_rules:
+  email:
+    strategy: quality_identity
+  phone:
+    strategy: quality_identity
+  first_name:
+    strategy: quality_first
+  last_name:
+    strategy: quality_first
+  company:
+    strategy: quality_first
+  city:
+    strategy: quality_first
+  district:
+    strategy: quality_first
+  address:
+    strategy: quality_first
+
+cluster_policy:
+  build_singleton_entities: true
+  preserve_field_conflicts: true
+  skip_clusters_with_internal_conflict: false
+
+reporting:
+  output_directory: survivorship/reports/latest
+  json: true
+  markdown: true

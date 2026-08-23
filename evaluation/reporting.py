@@ -10,6 +10,8 @@ PRODUCT_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 PRODUCT_QUALITY_PARTIALLY_AVAILABLE = "PARTIALLY_AVAILABLE"
 ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 ENTITY_RESOLUTION_QUALITY_AVAILABLE = "AVAILABLE"
+SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+SURVIVORSHIP_QUALITY_AVAILABLE = "AVAILABLE"
 SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SCHEMA_MAPPING_QUALITY_AVAILABLE = "AVAILABLE"
 
@@ -28,8 +30,10 @@ def build_report_data(
     real_schema_mapping_benchmark: dict[str, Any] | None = None,
     real_source_b_mapping_benchmark: dict[str, Any] | None = None,
     real_entity_resolution_benchmark: dict[str, Any] | None = None,
+    real_survivorship_benchmark: dict[str, Any] | None = None,
     schema_mapping_quality: str = SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
     entity_resolution_quality: str = ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
+    survivorship_quality: str = SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE,
 ) -> dict:
     hard_gate_status = "PASS" if overall_passed else "FAIL"
 
@@ -37,6 +41,7 @@ def build_report_data(
         "evaluation_mode": evaluation_mode,
         "product_quality_evaluation": product_quality_evaluation,
         "entity_resolution_quality": entity_resolution_quality,
+        "survivorship_quality": survivorship_quality,
         "schema_mapping_quality": schema_mapping_quality,
         "hard_gate_status": hard_gate_status,
         "overall_infrastructure_status": hard_gate_status,
@@ -69,6 +74,8 @@ def build_report_data(
         report["real_source_b_mapping_benchmark"] = real_source_b_mapping_benchmark
     if real_entity_resolution_benchmark is not None:
         report["real_entity_resolution_benchmark"] = real_entity_resolution_benchmark
+    if real_survivorship_benchmark is not None:
+        report["real_survivorship_benchmark"] = real_survivorship_benchmark
 
     return report
 
@@ -90,6 +97,7 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
         f"**Evaluation Mode:** {report_data['evaluation_mode']}",
         f"**Product Quality Evaluation:** {report_data['product_quality_evaluation']}",
         f"**Entity Resolution Quality:** {report_data['entity_resolution_quality']}",
+        f"**Survivorship Quality:** {report_data['survivorship_quality']}",
         f"**Schema Mapping Quality:** {report_data['schema_mapping_quality']}",
         f"**Dataset:** {report_data['dataset']['name']}",
         f"**Version:** {report_data['dataset']['version']}",
@@ -208,6 +216,34 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
                 (
                     f"| candidate_reduction_ratio | "
                     f"{real_entity_resolution.get('candidate_reduction_ratio', 0.0):.4f} |"
+                ),
+            ]
+        )
+
+    real_survivorship = report_data.get("real_survivorship_benchmark")
+    if isinstance(real_survivorship, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Survivorship Benchmark",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                (
+                    f"| merge_coherence_rate | "
+                    f"{real_survivorship.get('merge_coherence_rate', 0.0):.4f} |"
+                ),
+                (
+                    f"| field_match_rate | "
+                    f"{real_survivorship.get('field_match_rate', 0.0):.4f} |"
+                ),
+                (
+                    f"| conflict_preservation_rate | "
+                    f"{real_survivorship.get('conflict_preservation_rate', 0.0):.4f} |"
+                ),
+                (
+                    f"| preserved_conflict_count | "
+                    f"{real_survivorship.get('preserved_conflict_count', 0)} |"
                 ),
             ]
         )

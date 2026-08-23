@@ -21,12 +21,15 @@ from evaluation.reporting import (
     PRODUCT_QUALITY_PARTIALLY_AVAILABLE,
     SCHEMA_MAPPING_QUALITY_AVAILABLE,
     SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
+    SURVIVORSHIP_QUALITY_AVAILABLE,
+    SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE,
     build_report_data,
     write_json_report,
     write_markdown_report,
 )
 from evaluation.schema_mapping_benchmark import run_schema_mapping_benchmark
 from evaluation.source_b_mapping_benchmark import run_source_b_mapping_benchmark
+from evaluation.survivorship_benchmark import run_survivorship_benchmark
 from evaluation.validation_benchmark import (
     failures_to_dict,
     run_validation_benchmark,
@@ -207,6 +210,32 @@ def _entity_resolution_benchmark_to_dict(result) -> dict[str, Any]:
         "hard_negative_correct_no_match": result.hard_negative_correct_no_match,
         "candidate_miss_count": result.candidate_miss_count,
         "cluster_count": result.cluster_count,
+        "failures_by_kind": result.failures_by_kind,
+        "passed": result.passed,
+    }
+
+
+def _survivorship_benchmark_to_dict(result) -> dict[str, Any]:
+    return {
+        "split_name": result.split_name,
+        "record_count": result.record_count,
+        "canonical_entity_count": result.canonical_entity_count,
+        "merged_entity_count": result.merged_entity_count,
+        "singleton_entity_count": result.singleton_entity_count,
+        "review_excluded_record_count": result.review_excluded_record_count,
+        "preserved_conflict_count": result.preserved_conflict_count,
+        "merge_coherence_total": result.merge_coherence_total,
+        "merge_coherence_correct": result.merge_coherence_correct,
+        "merge_coherence_rate": result.merge_coherence_rate,
+        "cluster_person_purity_total": result.cluster_person_purity_total,
+        "cluster_person_purity_correct": result.cluster_person_purity_correct,
+        "cluster_person_purity_rate": result.cluster_person_purity_rate,
+        "field_comparisons": result.field_comparisons,
+        "field_matches": result.field_matches,
+        "field_match_rate": result.field_match_rate,
+        "conflict_cases": result.conflict_cases,
+        "conflict_preserved": result.conflict_preserved,
+        "conflict_preservation_rate": result.conflict_preservation_rate,
         "failures_by_kind": result.failures_by_kind,
         "passed": result.passed,
     }
@@ -429,6 +458,46 @@ def run_evaluation(
                 )
                 print()
 
+        survivorship_benchmark = None
+        survivorship_available = False
+        if dataset_path is not None:
+            survivorship_benchmark = run_survivorship_benchmark(
+                dataset_path=dataset_path,
+                split_name="test",
+            )
+            survivorship_available = survivorship_benchmark.ran_successfully
+            if survivorship_available:
+                print("Real Survivorship Benchmark")
+                print("------------------")
+                print(f"split: {survivorship_benchmark.split_name}")
+                print(f"record_count: {survivorship_benchmark.record_count}")
+                print(
+                    "canonical_entity_count: "
+                    f"{survivorship_benchmark.canonical_entity_count}"
+                )
+                print(
+                    "merge_coherence_rate: "
+                    f"{survivorship_benchmark.merge_coherence_rate:.4f}"
+                )
+                print(f"field_match_rate: {survivorship_benchmark.field_match_rate:.4f}")
+                print(
+                    "conflict_preservation_rate: "
+                    f"{survivorship_benchmark.conflict_preservation_rate:.4f}"
+                )
+                print(
+                    "survivorship_benchmark: "
+                    f"{'PASS' if survivorship_benchmark.passed else 'FAIL'}"
+                )
+                print()
+            elif survivorship_benchmark.error_message:
+                print("Real Survivorship Benchmark")
+                print("------------------")
+                print(
+                    "survivorship_benchmark: ERROR "
+                    f"({survivorship_benchmark.error_message})"
+                )
+                print()
+
         evaluation_mode, product_quality = _resolve_evaluation_labels(
             validation_available=validation_available,
             normalization_available=normalization_available,
@@ -500,6 +569,26 @@ def run_evaluation(
                 "(incorrect AUTO_MATCH / all AUTO_MATCH; NOT fixture false_merge_rate)"
             )
 
+        if survivorship_available and survivorship_benchmark is not None:
+            print()
+            print("Real Survivorship Benchmark Metrics")
+            print("------------------")
+            print(
+                "merge_coherence_rate: "
+                f"{survivorship_benchmark.merge_coherence_rate:.4f} "
+                "(source: golden_dataset_ground_truth/test_split)"
+            )
+            print(
+                "field_match_rate: "
+                f"{survivorship_benchmark.field_match_rate:.4f} "
+                "(normalized survivorship values vs clean/canonical.csv oracle)"
+            )
+            print(
+                "conflict_preservation_rate: "
+                f"{survivorship_benchmark.conflict_preservation_rate:.4f} "
+                "(distinct member values preserved in conflict metadata)"
+            )
+
         print()
         print("Hard Gates (Fixture Smoke)")
         print("------------------")
@@ -545,6 +634,11 @@ def run_evaluation(
                 if entity_resolution_available and entity_resolution_benchmark is not None
                 else None
             ),
+            real_survivorship_benchmark=(
+                _survivorship_benchmark_to_dict(survivorship_benchmark)
+                if survivorship_available and survivorship_benchmark is not None
+                else None
+            ),
             schema_mapping_quality=(
                 SCHEMA_MAPPING_QUALITY_AVAILABLE
                 if schema_mapping_available
@@ -554,6 +648,11 @@ def run_evaluation(
                 ENTITY_RESOLUTION_QUALITY_AVAILABLE
                 if entity_resolution_available
                 else ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE
+            ),
+            survivorship_quality=(
+                SURVIVORSHIP_QUALITY_AVAILABLE
+                if survivorship_available
+                else SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE
             ),
         )
 
@@ -577,6 +676,12 @@ def run_evaluation(
             else ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE
         )
         print(f"Entity Resolution Quality: {entity_quality}")
+        survivorship_quality = (
+            SURVIVORSHIP_QUALITY_AVAILABLE
+            if survivorship_available
+            else SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE
+        )
+        print(f"Survivorship Quality: {survivorship_quality}")
         schema_quality = (
             SCHEMA_MAPPING_QUALITY_AVAILABLE
             if schema_mapping_available

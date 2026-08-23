@@ -92,7 +92,38 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 06 (Entity Resolution).
+Early development — Sprint 07 (Survivorship & Canonical Entity Construction).
+
+## Sprint 07
+
+Sprint 07 adds deterministic survivorship and canonical entity construction on top of Sprint 06 entity resolution clusters.
+
+Current capabilities include:
+
+- `survivorship/` package with field rules, provenance, conflict preservation, and reporting,
+- config-driven survivorship policy (`configs/survivorship.yaml`),
+- quality-first field selection using Sprint 04 validation evidence (`survivorship/candidate_quality.py`),
+- non-destructive canonical entity construction from AUTO_MATCH clusters,
+- singleton entity generation for unmatched non-review records,
+- field-level provenance and preserved conflict metadata,
+- quality-first field selection with source priority as late tie-breaker,
+- real survivorship benchmark on golden dataset ground truth (`evaluation/survivorship_benchmark.py`),
+- survivorship CLI (`scripts/build_canonical_entities.py`).
+
+Build canonical entities:
+
+```bash
+python scripts/build_canonical_entities.py datasets/generated/ci-smoke/validation-positive-smoke.csv
+python scripts/build_canonical_entities.py source_a.csv source_b.csv --inspect-entity CE-C-000001
+```
+
+Run evaluation with real survivorship metrics:
+
+```bash
+python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+```
+
+Fixture hard gates remain infrastructure smoke; real survivorship metrics are reported separately when running evaluation with `--dataset`.
 
 ## Sprint 06
 
