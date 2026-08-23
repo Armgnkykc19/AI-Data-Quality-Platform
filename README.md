@@ -92,7 +92,39 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 05 (Schema Mapping Intelligence).
+Early development — Sprint 06 (Entity Resolution).
+
+## Sprint 06
+
+Sprint 06 adds deterministic, explainable entity resolution on canonical mapped and normalized records.
+
+Current capabilities include:
+
+- `entity_resolution/` package with blocking, evidence, scoring, decisions, and clustering,
+- config-driven weights and thresholds (`configs/entity_resolution.yaml`),
+- deterministic candidate generation via indexed blocking (email, phone, name+city, surname+company, company+city),
+- AUTO_MATCH / REVIEW / NO_MATCH decisions with false-match safety guards,
+- explainable pair evidence and conflict modeling,
+- deterministic entity clustering with transitive conflict guard,
+- source record immutability (no destructive merge),
+- structured review queue contract for future UI/API,
+- real entity resolution benchmark on golden dataset ground truth (`evaluation/entity_resolution_benchmark.py`),
+- entity resolution CLI (`scripts/resolve_entities.py`).
+
+Resolve entities:
+
+```bash
+python scripts/resolve_entities.py datasets/generated/ci-smoke/validation-positive-smoke.csv
+python scripts/resolve_entities.py input.csv --inspect-pair source_a-000001 source_a-000002
+```
+
+Run evaluation with real entity resolution metrics:
+
+```bash
+python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+```
+
+Fixture `auto_merge_precision`, `false_merge_rate`, and `candidate_recall` remain infrastructure smoke; real entity resolution metrics are reported separately when running evaluation with `--dataset`.
 
 ## Sprint 05
 

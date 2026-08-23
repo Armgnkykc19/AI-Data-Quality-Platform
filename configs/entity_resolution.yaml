@@ -1,0 +1,88 @@
+version: "0.1.0"
+description: Deterministic entity resolution configuration for Sprint 06.
+
+identity_fields:
+  - first_name
+  - last_name
+  - email
+  - phone
+  - company
+  - city
+  - district
+  - address
+
+forbidden_match_fields:
+  - person_id
+  - source_record_id
+  - source_name
+
+blocking:
+  min_key_length: 2
+  strategies:
+    - id: email_exact
+      reason: EMAIL_EXACT_BLOCK
+      fields: [email]
+    - id: phone_exact
+      reason: PHONE_EXACT_BLOCK
+      fields: [phone]
+    - id: name_city
+      reason: NAME_CITY_BLOCK
+      fields: [last_name, city]
+    - id: surname_company
+      reason: SURNAME_COMPANY_BLOCK
+      fields: [last_name, company]
+    - id: company_city
+      reason: COMPANY_CITY_BLOCK
+      fields: [company, city]
+
+scoring:
+  weights:
+    email_exact: 0.45
+    phone_exact: 0.45
+    first_name_exact: 0.12
+    last_name_exact: 0.12
+    company_exact: 0.10
+    city_exact: 0.04
+    district_exact: 0.03
+    address_exact: 0.06
+    first_name_similarity: 0.10
+    last_name_similarity: 0.10
+    company_similarity: 0.08
+    address_similarity: 0.05
+  conflict_penalties:
+    email_conflict: 0.55
+    phone_conflict: 0.55
+    company_conflict: 0.20
+    location_conflict: 0.15
+
+similarity:
+  fuzzy_minimum: 0.82
+  company_conflict_threshold: 0.60
+
+thresholds:
+  auto_match: 0.88
+  review: 0.50
+  ambiguity_margin: 0.05
+
+auto_match_rules:
+  require_strong_identity: true
+  strong_evidence_types:
+    - EMAIL_EXACT
+    - PHONE_EXACT
+  forbid_severe_conflicts: true
+  severe_conflict_types:
+    - EMAIL_CONFLICT
+    - PHONE_CONFLICT
+  weak_only_forces_review: true
+  weak_evidence_types:
+    - CITY_EXACT
+    - DISTRICT_EXACT
+
+clustering:
+  enabled: true
+  conflict_guard: true
+
+reporting:
+  output_directory: entity_resolution/reports/latest
+  json: true
+  markdown: true

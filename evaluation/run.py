@@ -5,6 +5,7 @@ from typing import Any
 import yaml
 
 from dataset.validation import validate_dataset
+from evaluation.entity_resolution_benchmark import run_entity_resolution_benchmark
 from evaluation.evaluator.hard_gates import (
     all_hard_gates_pass,
     evaluate_hard_gates,
@@ -12,6 +13,7 @@ from evaluation.evaluator.hard_gates import (
 from evaluation.ingestion_checks import run_ingestion_smoke_checks
 from evaluation.normalization_benchmark import run_normalization_benchmark
 from evaluation.reporting import (
+    ENTITY_RESOLUTION_QUALITY_AVAILABLE,
     ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
     EVALUATION_MODE_FIXTURE_SMOKE,
     EVALUATION_MODE_MIXED,
@@ -167,6 +169,45 @@ def _source_b_mapping_benchmark_to_dict(result) -> dict[str, Any]:
         "auto_map_precision": result.auto_map_precision,
         "expected_unmapped_count": result.expected_unmapped_count,
         "correct_unmapped": result.correct_unmapped,
+        "passed": result.passed,
+    }
+
+
+def _entity_resolution_benchmark_to_dict(result) -> dict[str, Any]:
+    return {
+        "split_name": result.split_name,
+        "record_count": result.record_count,
+        "possible_pair_count": result.possible_pair_count,
+        "candidate_pair_count": result.candidate_pair_count,
+        "candidate_reduction_ratio": result.candidate_reduction_ratio,
+        "labeled_positive_pairs": result.labeled_positive_pairs,
+        "labeled_negative_pairs": result.labeled_negative_pairs,
+        "candidate_recall": result.candidate_recall,
+        "true_positives": result.true_positives,
+        "false_positives": result.false_positives,
+        "false_negatives": result.false_negatives,
+        "true_negatives": result.true_negatives,
+        "precision": result.precision,
+        "recall": result.recall,
+        "f1": result.f1,
+        "auto_match_total": result.auto_match_total,
+        "auto_match_correct": result.auto_match_correct,
+        "auto_match_incorrect": result.auto_match_incorrect,
+        "auto_match_precision": result.auto_match_precision,
+        "auto_match_coverage": result.auto_match_coverage,
+        "false_match_rate": result.false_match_rate,
+        "review_count": result.review_count,
+        "no_match_count": result.no_match_count,
+        "hard_positive_total": result.hard_positive_total,
+        "hard_positive_auto_match": result.hard_positive_auto_match,
+        "hard_positive_review": result.hard_positive_review,
+        "hard_positive_missed": result.hard_positive_missed,
+        "hard_negative_total": result.hard_negative_total,
+        "hard_negative_false_auto_match": result.hard_negative_false_auto_match,
+        "hard_negative_correct_no_match": result.hard_negative_correct_no_match,
+        "candidate_miss_count": result.candidate_miss_count,
+        "cluster_count": result.cluster_count,
+        "failures_by_kind": result.failures_by_kind,
         "passed": result.passed,
     }
 
@@ -342,6 +383,52 @@ def run_evaluation(
             )
             print()
 
+        entity_resolution_benchmark = None
+        entity_resolution_available = False
+        if dataset_path is not None:
+            entity_resolution_benchmark = run_entity_resolution_benchmark(
+                dataset_path=dataset_path,
+                split_name="test",
+            )
+            entity_resolution_available = entity_resolution_benchmark.ran_successfully
+            if entity_resolution_available:
+                print("Real Entity Resolution Benchmark")
+                print("------------------")
+                print(f"split: {entity_resolution_benchmark.split_name}")
+                print(f"record_count: {entity_resolution_benchmark.record_count}")
+                print(
+                    "candidate_pair_count: "
+                    f"{entity_resolution_benchmark.candidate_pair_count}"
+                )
+                print(
+                    "candidate_recall: "
+                    f"{entity_resolution_benchmark.candidate_recall:.4f}"
+                )
+                print(f"precision: {entity_resolution_benchmark.precision:.4f}")
+                print(f"recall: {entity_resolution_benchmark.recall:.4f}")
+                print(f"f1: {entity_resolution_benchmark.f1:.4f}")
+                print(
+                    "auto_match_precision: "
+                    f"{entity_resolution_benchmark.auto_match_precision:.4f}"
+                )
+                print(
+                    "false_match_rate: "
+                    f"{entity_resolution_benchmark.false_match_rate:.4f}"
+                )
+                print(
+                    "entity_resolution_benchmark: "
+                    f"{'PASS' if entity_resolution_benchmark.passed else 'FAIL'}"
+                )
+                print()
+            elif entity_resolution_benchmark.error_message:
+                print("Real Entity Resolution Benchmark")
+                print("------------------")
+                print(
+                    "entity_resolution_benchmark: ERROR "
+                    f"({entity_resolution_benchmark.error_message})"
+                )
+                print()
+
         evaluation_mode, product_quality = _resolve_evaluation_labels(
             validation_available=validation_available,
             normalization_available=normalization_available,
@@ -393,6 +480,26 @@ def run_evaluation(
                 "(source: labeled mapping benchmark cases)"
             )
 
+        if entity_resolution_available and entity_resolution_benchmark is not None:
+            print()
+            print("Real Entity Resolution Benchmark Metrics")
+            print("------------------")
+            print(
+                "candidate_recall: "
+                f"{entity_resolution_benchmark.candidate_recall:.4f} "
+                "(source: golden_dataset_ground_truth/test_split)"
+            )
+            print(
+                "auto_match_recall_on_labeled_positives: "
+                f"{entity_resolution_benchmark.auto_match_recall_on_labeled_positives:.4f} "
+                "(AUTO_MATCH on labeled positive pairs / all labeled positive pairs)"
+            )
+            print(
+                "false_match_rate: "
+                f"{entity_resolution_benchmark.false_match_rate:.4f} "
+                "(incorrect AUTO_MATCH / all AUTO_MATCH; NOT fixture false_merge_rate)"
+            )
+
         print()
         print("Hard Gates (Fixture Smoke)")
         print("------------------")
@@ -433,10 +540,20 @@ def run_evaluation(
                 if source_b_mapping_benchmark.ran_successfully
                 else None
             ),
+            real_entity_resolution_benchmark=(
+                _entity_resolution_benchmark_to_dict(entity_resolution_benchmark)
+                if entity_resolution_available and entity_resolution_benchmark is not None
+                else None
+            ),
             schema_mapping_quality=(
                 SCHEMA_MAPPING_QUALITY_AVAILABLE
                 if schema_mapping_available
                 else SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE
+            ),
+            entity_resolution_quality=(
+                ENTITY_RESOLUTION_QUALITY_AVAILABLE
+                if entity_resolution_available
+                else ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE
             ),
         )
 
@@ -454,7 +571,12 @@ def run_evaluation(
         print(f"Infrastructure Hard Gates: {hard_gate_status}")
         print(f"Overall Infrastructure Status: {hard_gate_status}")
         print(f"Product Quality Evaluation: {product_quality}")
-        print(f"Entity Resolution Quality: {ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE}")
+        entity_quality = (
+            ENTITY_RESOLUTION_QUALITY_AVAILABLE
+            if entity_resolution_available
+            else ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE
+        )
+        print(f"Entity Resolution Quality: {entity_quality}")
         schema_quality = (
             SCHEMA_MAPPING_QUALITY_AVAILABLE
             if schema_mapping_available

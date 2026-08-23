@@ -9,6 +9,7 @@ EVALUATION_MODE_MIXED = "MIXED"
 PRODUCT_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 PRODUCT_QUALITY_PARTIALLY_AVAILABLE = "PARTIALLY_AVAILABLE"
 ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+ENTITY_RESOLUTION_QUALITY_AVAILABLE = "AVAILABLE"
 SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SCHEMA_MAPPING_QUALITY_AVAILABLE = "AVAILABLE"
 
@@ -26,14 +27,16 @@ def build_report_data(
     real_normalization_benchmark: dict[str, Any] | None = None,
     real_schema_mapping_benchmark: dict[str, Any] | None = None,
     real_source_b_mapping_benchmark: dict[str, Any] | None = None,
+    real_entity_resolution_benchmark: dict[str, Any] | None = None,
     schema_mapping_quality: str = SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
+    entity_resolution_quality: str = ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
 ) -> dict:
     hard_gate_status = "PASS" if overall_passed else "FAIL"
 
     report: dict[str, Any] = {
         "evaluation_mode": evaluation_mode,
         "product_quality_evaluation": product_quality_evaluation,
-        "entity_resolution_quality": ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
+        "entity_resolution_quality": entity_resolution_quality,
         "schema_mapping_quality": schema_mapping_quality,
         "hard_gate_status": hard_gate_status,
         "overall_infrastructure_status": hard_gate_status,
@@ -64,6 +67,8 @@ def build_report_data(
         report["real_schema_mapping_benchmark"] = real_schema_mapping_benchmark
     if real_source_b_mapping_benchmark is not None:
         report["real_source_b_mapping_benchmark"] = real_source_b_mapping_benchmark
+    if real_entity_resolution_benchmark is not None:
+        report["real_entity_resolution_benchmark"] = real_entity_resolution_benchmark
 
     return report
 
@@ -172,6 +177,37 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
                 (
                     f"| review_routing_recall | "
                     f"{real_schema_mapping.get('review_routing_recall', 0.0):.4f} |"
+                ),
+            ]
+        )
+
+    real_entity_resolution = report_data.get("real_entity_resolution_benchmark")
+    if isinstance(real_entity_resolution, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Entity Resolution Benchmark",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                (
+                    f"| candidate_recall | "
+                    f"{real_entity_resolution.get('candidate_recall', 0.0):.4f} |"
+                ),
+                f"| precision | {real_entity_resolution.get('precision', 0.0):.4f} |",
+                f"| recall | {real_entity_resolution.get('recall', 0.0):.4f} |",
+                f"| f1 | {real_entity_resolution.get('f1', 0.0):.4f} |",
+                (
+                    f"| auto_match_precision | "
+                    f"{real_entity_resolution.get('auto_match_precision', 0.0):.4f} |"
+                ),
+                (
+                    f"| false_match_rate | "
+                    f"{real_entity_resolution.get('false_match_rate', 0.0):.4f} |"
+                ),
+                (
+                    f"| candidate_reduction_ratio | "
+                    f"{real_entity_resolution.get('candidate_reduction_ratio', 0.0):.4f} |"
                 ),
             ]
         )
