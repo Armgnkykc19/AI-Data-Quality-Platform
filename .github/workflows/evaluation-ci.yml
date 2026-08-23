@@ -183,3 +183,25 @@ jobs:
           assert contact["decision"] == "REVIEW", contact
           print("Schema mapping ambiguous smoke confirmed REVIEW routing.")
           PY
+
+      - name: Entity resolution CLI smoke
+        run: |
+          python scripts/resolve_entities.py datasets/generated/ci-smoke/validation-positive-smoke.csv --report-dir entity_resolution/reports/ci-positive-smoke
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected entity resolution exit code 0, got $exit_code"
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("entity_resolution/reports/ci-positive-smoke/entity_resolution_report.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          assert "summary" in report
+          print("Entity resolution smoke report confirmed.")
+          PY
+          echo "Entity resolution CLI smoke completed."

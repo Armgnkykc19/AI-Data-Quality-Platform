@@ -21,9 +21,6 @@ from schema_mapping.apply import apply_mapping_plan  # noqa: E402
 from schema_mapping.config import load_schema_mapping_config  # noqa: E402
 from schema_mapping.engine import build_mapping_plan  # noqa: E402
 from schema_mapping.reporting import write_mapping_reports  # noqa: E402
-from validation.config import load_validation_config  # noqa: E402
-from validation.engine import ValidationEngine  # noqa: E402
-from validation.models import ValidationSummary  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,17 +69,6 @@ def _print_mapping_table(plan) -> None:
             f"{mapping.decision.value:<10} "
             f"{mapping.score:.2f}"
         )
-
-
-def _build_validation_summary(records) -> ValidationSummary:
-    summary = ValidationSummary(total_records=len(records))
-    for record in records:
-        if record.is_valid:
-            summary.valid_records += 1
-        else:
-            summary.invalid_records += 1
-        summary.error_count += record.error_count
-    return summary
 
 
 def _write_canonical_csv(path: Path, applied) -> None:
@@ -143,14 +129,6 @@ def main() -> int:
             )
             _write_canonical_csv(output_path, applied)
 
-            validation_config = load_validation_config(args.validation_config)
-            engine = ValidationEngine(validation_config)
-            validation_results = [
-                engine.validate_record(record.canonical_values, row_number=record.row_number)
-                for record in applied.records
-            ]
-            validation_summary = _build_validation_summary(validation_results)
-
             quality = run_quality_pipeline(parsed)
             apply_summary = {
                 "records_processed": applied.total_records,
@@ -159,7 +137,7 @@ def main() -> int:
                 "unmapped_source_columns": list(applied.unmapped_source_columns),
                 "missing_canonical_fields": list(applied.missing_canonical_fields),
                 "canonical_output": str(output_path),
-                "post_mapping_validation_errors": validation_summary.error_count,
+                "post_mapping_validation_errors": quality.post_validation_summary.error_count,
                 "quality_pipeline_transformations": quality.total_transformations,
             }
             print()
