@@ -10,9 +10,7 @@ from validation.config import load_validation_config
 from validation.engine import ValidationEngine
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_CASES_PATH = (
-    PROJECT_ROOT / "evaluation" / "fixtures" / "validation_benchmark_cases.json"
-)
+DEFAULT_CASES_PATH = PROJECT_ROOT / "evaluation" / "fixtures" / "validation_benchmark_cases.json"
 
 POSITIVE_CLASS_DEFINITION = (
     "A labeled invalid condition that the deterministic validation engine is "
@@ -128,9 +126,7 @@ def run_validation_benchmark(
         for case in cases:
             try:
                 validation = engine.validate_record(case.record)
-                detected = any(
-                    issue.rule_id == case.target_rule_id for issue in validation.issues
-                )
+                detected = any(issue.rule_id == case.target_rule_id for issue in validation.issues)
                 actual_rule_ids = tuple(sorted({issue.rule_id for issue in validation.issues}))
 
                 if case.expect_issue and detected:

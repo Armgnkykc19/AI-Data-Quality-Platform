@@ -163,18 +163,12 @@ def run_survivorship_benchmark(
 
         result.cluster_person_purity_total = purity_total
         result.cluster_person_purity_correct = purity_correct
-        result.cluster_person_purity_rate = (
-            purity_correct / purity_total if purity_total else 1.0
-        )
+        result.cluster_person_purity_rate = purity_correct / purity_total if purity_total else 1.0
 
         merge_total = merge_correct = 0
 
         for person_id, record_ids in grouped.items():
-            evaluable = [
-                record_id
-                for record_id in record_ids
-                if record_id not in review_excluded
-            ]
+            evaluable = [record_id for record_id in record_ids if record_id not in review_excluded]
             if len(evaluable) < 2:
                 continue
             entity_ids = []
@@ -198,9 +192,7 @@ def run_survivorship_benchmark(
 
         result.merge_coherence_total = merge_total
         result.merge_coherence_correct = merge_correct
-        result.merge_coherence_rate = (
-            merge_correct / merge_total if merge_total else 1.0
-        )
+        result.merge_coherence_rate = merge_correct / merge_total if merge_total else 1.0
 
         canonical_oracle = load_canonical_oracle(dataset_path)
         field_comparisons = field_matches = 0
@@ -234,9 +226,7 @@ def run_survivorship_benchmark(
 
         result.field_comparisons = field_comparisons
         result.field_matches = field_matches
-        result.field_match_rate = (
-            field_matches / field_comparisons if field_comparisons else 1.0
-        )
+        result.field_match_rate = field_matches / field_comparisons if field_comparisons else 1.0
 
         conflict_cases = conflict_preserved = 0
         records_by_id = {record.record_id: record for record in split_records}

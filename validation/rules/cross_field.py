@@ -35,9 +35,7 @@ class CrossFieldCityDistrictRule:
                 rule_id=self.rule_id,
                 severity=severity,
                 code="city_district_mismatch",
-                message=(
-                    f"District {district_value!r} is not valid for city {city_value!r}"
-                ),
+                message=(f"District {district_value!r} is not valid for city {city_value!r}"),
                 value=district,
             )
         ]

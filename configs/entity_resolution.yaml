@@ -25,6 +25,12 @@ blocking:
     - id: phone_exact
       reason: PHONE_EXACT_BLOCK
       fields: [phone]
+    - id: phone_last7
+      reason: PHONE_LAST7_BLOCK
+      fields: [phone]
+    - id: name_surname
+      reason: NAME_SURNAME_BLOCK
+      fields: [first_name, last_name]
     - id: name_city
       reason: NAME_CITY_BLOCK
       fields: [last_name, city]

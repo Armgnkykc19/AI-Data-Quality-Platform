@@ -32,9 +32,7 @@ class TextMaxLengthRule:
                         rule_id=self.rule_id,
                         severity=severity,
                         code="text_too_long",
-                        message=(
-                            f"Field exceeds maximum length of {max_length} characters"
-                        ),
+                        message=(f"Field exceeds maximum length of {max_length} characters"),
                         value=value,
                     )
                 )

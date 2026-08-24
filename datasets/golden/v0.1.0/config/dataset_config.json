@@ -13,10 +13,16 @@
     "config_path": "configs/canonical_schema.yaml"
   },
   "splits": {
-    "train_ratio": 0.7,
+    "train_ratio": 0.6,
     "validation_ratio": 0.15,
     "test_ratio": 0.15,
-    "holdout_seed": 99
+    "final_holdout_ratio": 0.1,
+    "holdout_seed": 99,
+    "min_hard_negative_pairs_per_eval_split": {
+      "validation": 5,
+      "test": 5,
+      "final_holdout": 5
+    }
   },
   "sources": {
     "source_a": {

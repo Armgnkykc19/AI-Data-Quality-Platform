@@ -27,9 +27,7 @@ def profile_dataset(parsed: ParsedDataset, config: IngestionConfig) -> DatasetPr
         blank_count = sum(1 for value in values_for_row if _is_blank(value))
         non_null_count = row_count - null_count - blank_count
         non_empty_values = [
-            value.strip()
-            for value in values_for_row
-            if value is not None and value.strip() != ""
+            value.strip() for value in values_for_row if value is not None and value.strip() != ""
         ]
         unique_values = set(non_empty_values)
         completeness_ratio = non_null_count / row_count if row_count else 0.0

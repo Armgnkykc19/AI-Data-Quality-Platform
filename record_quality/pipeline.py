@@ -45,9 +45,7 @@ def run_quality_pipeline(
     profile = profile_dataset(parsed, ingestion_config)
     mapping_plan = build_mapping_plan(parsed, profile=profile)
     applied = apply_mapping_plan(parsed, mapping_plan)
-    canonical_by_row = {
-        record.row_number: record.canonical_values for record in applied.records
-    }
+    canonical_by_row = {record.row_number: record.canonical_values for record in applied.records}
 
     pre_results = []
     quality_records: list[RecordQualityState] = []

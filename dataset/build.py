@@ -116,13 +116,11 @@ def build_golden_dataset(
         all_corruptions.extend(source_a_corruptions)
         all_source_records.extend(source_a_records)
 
-        source_b_rows, source_b_records, source_b_corruptions, source_b_columns = (
-            generate_source_b(
-                canonical_records=clean_records,
-                profile=profiles["schema_variation"],
-                severities=severities,
-                seed=dataset_config.seed + 2,
-            )
+        source_b_rows, source_b_records, source_b_corruptions, source_b_columns = generate_source_b(
+            canonical_records=clean_records,
+            profile=profiles["schema_variation"],
+            severities=severities,
+            seed=dataset_config.seed + 2,
         )
         source_b_path = temp_base / "sources" / "source_b.csv"
         write_source_csv(source_b_path, source_b_rows, source_b_columns)
@@ -175,18 +173,20 @@ def build_golden_dataset(
         all_source_records.extend(hn_records)
         hard_negative_pairs.extend(hn_pairs)
 
-        malformed_dir = temp_base / dataset_config.malformed.get(
-            "output_subdirectory", "malformed"
-        )
+        malformed_dir = temp_base / dataset_config.malformed.get("output_subdirectory", "malformed")
         malformed_manifest = generate_malformed_fixtures(malformed_dir)
 
         person_mappings = {
             record.source_record_id: record.person_id for record in all_source_records
         }
 
+        hard_negative_person_pairs = [
+            (pair.person_id_a, pair.person_id_b) for pair in hard_negative_pairs
+        ]
         splits = build_split_metadata(
             person_ids=[record["person_id"] for record in clean_records],
             split_config=dataset_config.splits,
+            hard_negative_pairs=hard_negative_person_pairs,
         )
 
         expected_counts = {

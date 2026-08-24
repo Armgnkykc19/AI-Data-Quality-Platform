@@ -12,6 +12,11 @@ from evaluation.evaluator.hard_gates import (
 )
 from evaluation.ingestion_checks import run_ingestion_smoke_checks
 from evaluation.normalization_benchmark import run_normalization_benchmark
+from evaluation.product_metrics import (
+    collect_product_metrics,
+    evaluate_product_gates,
+    product_metrics_summary,
+)
 from evaluation.reporting import (
     ENTITY_RESOLUTION_QUALITY_AVAILABLE,
     ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
@@ -27,9 +32,11 @@ from evaluation.reporting import (
     write_json_report,
     write_markdown_report,
 )
+from evaluation.row_accounting import run_row_accounting_audit
 from evaluation.schema_mapping_benchmark import run_schema_mapping_benchmark
 from evaluation.source_b_mapping_benchmark import run_source_b_mapping_benchmark
 from evaluation.survivorship_benchmark import run_survivorship_benchmark
+from evaluation.threshold_sweep import run_threshold_sweep, threshold_sweep_to_dict
 from evaluation.validation_benchmark import (
     failures_to_dict,
     run_validation_benchmark,
@@ -150,6 +157,9 @@ def _schema_mapping_benchmark_to_dict(result) -> dict[str, Any]:
         "review_routing_recall": result.review_routing_recall,
         "expected_unmapped_count": result.expected_unmapped_count,
         "correct_unmapped": result.correct_unmapped,
+        "critical_field_total": result.critical_field_total,
+        "critical_field_correct": result.critical_field_correct,
+        "critical_field_recall": result.critical_field_recall,
         "failures_by_category": result.failures_by_category,
         "passed": result.passed,
     }
@@ -252,6 +262,12 @@ def _resolve_evaluation_labels(
     return EVALUATION_MODE_FIXTURE_SMOKE, PRODUCT_QUALITY_NOT_YET_AVAILABLE
 
 
+def _load_gate_config(config: dict) -> dict:
+    if "infrastructure_gates" in config:
+        return config["infrastructure_gates"]
+    return config["hard_gates"]
+
+
 def run_evaluation(
     config_path: Path,
     dataset_path: Path | None = None,
@@ -263,9 +279,16 @@ def run_evaluation(
         metrics = get_fixture_metrics()
         gate_results = evaluate_hard_gates(
             metrics=metrics,
-            gate_config=config["hard_gates"],
+            gate_config=_load_gate_config(config),
         )
-        overall_passed = all_hard_gates_pass(gate_results)
+        infrastructure_passed = all_hard_gates_pass(gate_results)
+        product_gate_results = []
+        product_metrics: dict[str, float] = {}
+        product_availability = []
+        product_gate_status = "SKIPPED"
+        product_passed = True
+        row_accounting_audit = None
+        threshold_sweep = None
 
         if dataset_path is not None:
             sanity_passed, sanity_messages = run_dataset_sanity_checks(dataset_path)
@@ -308,10 +331,7 @@ def run_evaluation(
             print(f"precision: {validation_benchmark.precision:.4f}")
             print(f"recall: {validation_benchmark.recall:.4f}")
             print(f"f1: {validation_benchmark.f1:.4f}")
-            print(
-                "validation_benchmark: "
-                f"{'PASS' if validation_benchmark.passed else 'FAIL'}"
-            )
+            print(f"validation_benchmark: {'PASS' if validation_benchmark.passed else 'FAIL'}")
             print()
         elif validation_benchmark.error_message:
             print("Real Validation Benchmark")
@@ -326,30 +346,17 @@ def run_evaluation(
             normalization_available = True
             print("Real Deterministic Normalization Benchmark")
             print("------------------")
-            print(
-                "expected_transformations: "
-                f"{normalization_benchmark.expected_transformations}"
-            )
-            print(
-                "correct_transformations: "
-                f"{normalization_benchmark.correct_transformations}"
-            )
-            print(
-                "incorrect_transformations: "
-                f"{normalization_benchmark.incorrect_transformations}"
-            )
-            print(
-                "missed_transformations: "
-                f"{normalization_benchmark.missed_transformations}"
-            )
+            print(f"expected_transformations: {normalization_benchmark.expected_transformations}")
+            print(f"correct_transformations: {normalization_benchmark.correct_transformations}")
+            print(f"incorrect_transformations: {normalization_benchmark.incorrect_transformations}")
+            print(f"missed_transformations: {normalization_benchmark.missed_transformations}")
             print(
                 f"normalization_accuracy: "
                 f"{normalization_benchmark.normalization_accuracy:.4f} "
                 "(real benchmark — whitespace/phone_format only)"
             )
             print(
-                "normalization_benchmark: "
-                f"{'PASS' if normalization_benchmark.passed else 'FAIL'}"
+                f"normalization_benchmark: {'PASS' if normalization_benchmark.passed else 'FAIL'}"
             )
             print()
 
@@ -367,24 +374,16 @@ def run_evaluation(
             print(f"recall: {schema_mapping_benchmark.recall:.4f}")
             print(f"f1: {schema_mapping_benchmark.f1:.4f}")
             print(f"mapping_accuracy: {schema_mapping_benchmark.mapping_accuracy:.4f}")
+            print(f"auto_map_precision: {schema_mapping_benchmark.auto_map_precision:.4f}")
+            print(f"review_routing_recall: {schema_mapping_benchmark.review_routing_recall:.4f}")
             print(
-                f"auto_map_precision: {schema_mapping_benchmark.auto_map_precision:.4f}"
-            )
-            print(
-                f"review_routing_recall: "
-                f"{schema_mapping_benchmark.review_routing_recall:.4f}"
-            )
-            print(
-                "schema_mapping_benchmark: "
-                f"{'PASS' if schema_mapping_benchmark.passed else 'FAIL'}"
+                f"schema_mapping_benchmark: {'PASS' if schema_mapping_benchmark.passed else 'FAIL'}"
             )
             print()
         elif schema_mapping_benchmark.error_message:
             print("Real Schema Mapping Benchmark")
             print("------------------")
-            print(
-                f"schema_mapping_benchmark: ERROR ({schema_mapping_benchmark.error_message})"
-            )
+            print(f"schema_mapping_benchmark: ERROR ({schema_mapping_benchmark.error_message})")
             print()
 
         source_b_mapping_benchmark = run_source_b_mapping_benchmark()
@@ -395,9 +394,7 @@ def run_evaluation(
             print(f"labeled_column_count: {source_b_mapping_benchmark.labeled_column_count}")
             print(f"correct_mappings: {source_b_mapping_benchmark.correct_mappings}")
             print(f"mapping_accuracy: {source_b_mapping_benchmark.mapping_accuracy:.4f}")
-            print(
-                f"auto_map_precision: {source_b_mapping_benchmark.auto_map_precision:.4f}"
-            )
+            print(f"auto_map_precision: {source_b_mapping_benchmark.auto_map_precision:.4f}")
             print(
                 "source_b_mapping_benchmark: "
                 f"{'PASS' if source_b_mapping_benchmark.passed else 'FAIL'}"
@@ -406,10 +403,7 @@ def run_evaluation(
         elif source_b_mapping_benchmark.error_message:
             print("Real Source B Schema Mapping Benchmark")
             print("------------------")
-            print(
-                "source_b_mapping_benchmark: ERROR "
-                f"({source_b_mapping_benchmark.error_message})"
-            )
+            print(f"source_b_mapping_benchmark: ERROR ({source_b_mapping_benchmark.error_message})")
             print()
 
         entity_resolution_benchmark = None
@@ -425,25 +419,15 @@ def run_evaluation(
                 print("------------------")
                 print(f"split: {entity_resolution_benchmark.split_name}")
                 print(f"record_count: {entity_resolution_benchmark.record_count}")
-                print(
-                    "candidate_pair_count: "
-                    f"{entity_resolution_benchmark.candidate_pair_count}"
-                )
-                print(
-                    "candidate_recall: "
-                    f"{entity_resolution_benchmark.candidate_recall:.4f}"
-                )
+                print(f"candidate_pair_count: {entity_resolution_benchmark.candidate_pair_count}")
+                print(f"candidate_recall: {entity_resolution_benchmark.candidate_recall:.4f}")
                 print(f"precision: {entity_resolution_benchmark.precision:.4f}")
                 print(f"recall: {entity_resolution_benchmark.recall:.4f}")
                 print(f"f1: {entity_resolution_benchmark.f1:.4f}")
                 print(
-                    "auto_match_precision: "
-                    f"{entity_resolution_benchmark.auto_match_precision:.4f}"
+                    f"auto_match_precision: {entity_resolution_benchmark.auto_match_precision:.4f}"
                 )
-                print(
-                    "false_match_rate: "
-                    f"{entity_resolution_benchmark.false_match_rate:.4f}"
-                )
+                print(f"false_match_rate: {entity_resolution_benchmark.false_match_rate:.4f}")
                 print(
                     "entity_resolution_benchmark: "
                     f"{'PASS' if entity_resolution_benchmark.passed else 'FAIL'}"
@@ -471,32 +455,78 @@ def run_evaluation(
                 print("------------------")
                 print(f"split: {survivorship_benchmark.split_name}")
                 print(f"record_count: {survivorship_benchmark.record_count}")
-                print(
-                    "canonical_entity_count: "
-                    f"{survivorship_benchmark.canonical_entity_count}"
-                )
-                print(
-                    "merge_coherence_rate: "
-                    f"{survivorship_benchmark.merge_coherence_rate:.4f}"
-                )
+                print(f"canonical_entity_count: {survivorship_benchmark.canonical_entity_count}")
+                print(f"merge_coherence_rate: {survivorship_benchmark.merge_coherence_rate:.4f}")
                 print(f"field_match_rate: {survivorship_benchmark.field_match_rate:.4f}")
                 print(
                     "conflict_preservation_rate: "
                     f"{survivorship_benchmark.conflict_preservation_rate:.4f}"
                 )
                 print(
-                    "survivorship_benchmark: "
-                    f"{'PASS' if survivorship_benchmark.passed else 'FAIL'}"
+                    f"survivorship_benchmark: {'PASS' if survivorship_benchmark.passed else 'FAIL'}"
                 )
                 print()
             elif survivorship_benchmark.error_message:
                 print("Real Survivorship Benchmark")
                 print("------------------")
-                print(
-                    "survivorship_benchmark: ERROR "
-                    f"({survivorship_benchmark.error_message})"
-                )
+                print(f"survivorship_benchmark: ERROR ({survivorship_benchmark.error_message})")
                 print()
+
+        if dataset_path is not None:
+            row_accounting_audit = run_row_accounting_audit(dataset_path)
+            print("Row Accounting Audit")
+            print("------------------")
+            print(f"discovered_rows: {row_accounting_audit.discovered_rows}")
+            print(f"accepted_rows: {row_accounting_audit.accepted_rows}")
+            print(f"rejected_rows: {row_accounting_audit.rejected_rows}")
+            print(f"unaccounted_rows: {row_accounting_audit.unaccounted_rows}")
+            print(f"silent_row_loss_rate: {row_accounting_audit.silent_row_loss_rate:.4f}")
+            print(f"row_accounting: {'PASS' if row_accounting_audit.passed else 'FAIL'}")
+            print()
+
+            threshold_sweep = run_threshold_sweep(
+                dataset_path=dataset_path,
+                split_name="validation",
+            )
+            print("Threshold Sweep (validation only — recommendation only)")
+            print("------------------")
+            if threshold_sweep.ran_successfully:
+                print(f"current_threshold: {threshold_sweep.current_threshold:.2f}")
+                print(f"recommended_threshold: {threshold_sweep.recommended_threshold}")
+                print(f"recommendation: {threshold_sweep.recommendation_reason}")
+            else:
+                print(f"threshold_sweep: ERROR ({threshold_sweep.error_message})")
+            print()
+
+        product_gate_config = config.get("product_gates", {})
+        if product_gate_config.get("enabled", False):
+            if dataset_path is None and product_gate_config.get("require_dataset", True):
+                product_gate_status = "SKIPPED"
+                product_passed = True
+            elif dataset_path is not None:
+                product_metrics, product_availability = collect_product_metrics(
+                    entity_resolution_benchmark=entity_resolution_benchmark,
+                    schema_mapping_benchmark=schema_mapping_benchmark,
+                    source_b_mapping_benchmark=source_b_mapping_benchmark,
+                    normalization_benchmark=normalization_benchmark,
+                    survivorship_benchmark=survivorship_benchmark,
+                    row_accounting_audit=row_accounting_audit,
+                )
+                try:
+                    product_gate_results, _ = evaluate_product_gates(
+                        metrics=product_metrics,
+                        gate_config=product_gate_config.get("gates", {}),
+                    )
+                    product_passed = all_hard_gates_pass(product_gate_results)
+                    product_gate_status = "PASS" if product_passed else "FAIL"
+                except KeyError as exc:
+                    product_gate_results = []
+                    product_passed = False
+                    product_gate_status = "FAIL"
+                    print("Product Gate Fail-Closed")
+                    print("------------------")
+                    print(str(exc))
+                    print()
 
         evaluation_mode, product_quality = _resolve_evaluation_labels(
             validation_available=validation_available,
@@ -539,6 +569,7 @@ def run_evaluation(
             print("Real Schema Mapping Benchmark Metrics")
             print("------------------")
             print(f"mapping_accuracy: {schema_mapping_benchmark.mapping_accuracy:.4f}")
+            print(f"critical_field_recall: {schema_mapping_benchmark.critical_field_recall:.4f}")
             print(f"precision: {schema_mapping_benchmark.precision:.4f}")
             print(f"recall: {schema_mapping_benchmark.recall:.4f}")
             print(f"f1: {schema_mapping_benchmark.f1:.4f}")
@@ -590,7 +621,7 @@ def run_evaluation(
             )
 
         print()
-        print("Hard Gates (Fixture Smoke)")
+        print("Infrastructure Hard Gates (Fixture Smoke)")
         print("------------------")
         for result in gate_results:
             status = "PASS" if result.passed else "FAIL"
@@ -600,6 +631,21 @@ def run_evaluation(
                 f"operator={result.operator}, "
                 f"threshold={result.threshold:.4f})"
             )
+
+        if product_gate_config.get("enabled", False) and product_gate_results:
+            print()
+            print("Product Hard Gates (Real Benchmark Metrics)")
+            print("------------------")
+            for result in product_gate_results:
+                status = "PASS" if result.passed else "FAIL"
+                print(
+                    f"{result.name}: {status} "
+                    f"(actual={result.actual:.4f}, "
+                    f"operator={result.operator}, "
+                    f"threshold={result.threshold:.4f})"
+                )
+
+        overall_passed = infrastructure_passed and product_passed
 
         report_data = build_report_data(
             dataset_name=dataset["name"],
@@ -655,6 +701,33 @@ def run_evaluation(
                 else SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE
             ),
         )
+        report_data["infrastructure_gate_status"] = "PASS" if infrastructure_passed else "FAIL"
+        report_data["product_gate_status"] = product_gate_status
+        report_data["product_metrics"] = product_metrics_summary(
+            product_metrics,
+            product_availability,
+        )
+        report_data["product_gates"] = [
+            {
+                "name": result.name,
+                "actual": result.actual,
+                "threshold": result.threshold,
+                "operator": result.operator,
+                "passed": result.passed,
+            }
+            for result in product_gate_results
+        ]
+        if row_accounting_audit is not None:
+            report_data["row_accounting_audit"] = {
+                "discovered_rows": row_accounting_audit.discovered_rows,
+                "accepted_rows": row_accounting_audit.accepted_rows,
+                "rejected_rows": row_accounting_audit.rejected_rows,
+                "unaccounted_rows": row_accounting_audit.unaccounted_rows,
+                "silent_row_loss_rate": row_accounting_audit.silent_row_loss_rate,
+                "passed": row_accounting_audit.passed,
+            }
+        if threshold_sweep is not None:
+            report_data["threshold_sweep"] = threshold_sweep_to_dict(threshold_sweep)
 
         output_directory = PROJECT_ROOT / config["reporting"]["output_directory"]
         if config["reporting"]["json"]:
@@ -666,9 +739,11 @@ def run_evaluation(
         print(f"Reports: {output_directory}")
         print()
 
-        hard_gate_status = "PASS" if overall_passed else "FAIL"
+        hard_gate_status = "PASS" if infrastructure_passed else "FAIL"
         print(f"Infrastructure Hard Gates: {hard_gate_status}")
         print(f"Overall Infrastructure Status: {hard_gate_status}")
+        print(f"Product Hard Gates: {product_gate_status}")
+        print(f"Overall Acceptance Status: {'PASS' if overall_passed else 'FAIL'}")
         print(f"Product Quality Evaluation: {product_quality}")
         entity_quality = (
             ENTITY_RESOLUTION_QUALITY_AVAILABLE

@@ -4,6 +4,12 @@ description: Deterministic schema mapping configuration for Sprint 05.
 canonical_schema_path: configs/canonical_schema.yaml
 
 # Canonical fields eligible for automatic header mapping.
+critical_fields:
+  - first_name
+  - last_name
+  - email
+  - phone
+
 mappable_fields:
   - first_name
   - last_name

@@ -98,23 +98,25 @@ def main() -> int:
             if inspected is None:
                 print(f"Pair not found in candidate set: {left_id}, {right_id}")
                 return 4
-            print(json.dumps(
-                {
-                    "record_a_id": inspected.pair.record_a_id,
-                    "record_b_id": inspected.pair.record_b_id,
-                    "decision": inspected.decision.value,
-                    "score": round(inspected.comparison.score, 6),
-                    "reason": inspected.reason,
-                    "evidence": [
-                        item.evidence_type.value for item in inspected.comparison.evidence
-                    ],
-                    "conflicts": [
-                        item.conflict_type.value for item in inspected.comparison.conflicts
-                    ],
-                },
-                indent=2,
-                ensure_ascii=False,
-            ))
+            print(
+                json.dumps(
+                    {
+                        "record_a_id": inspected.pair.record_a_id,
+                        "record_b_id": inspected.pair.record_b_id,
+                        "decision": inspected.decision.value,
+                        "score": round(inspected.comparison.score, 6),
+                        "reason": inspected.reason,
+                        "evidence": [
+                            item.evidence_type.value for item in inspected.comparison.evidence
+                        ],
+                        "conflicts": [
+                            item.conflict_type.value for item in inspected.comparison.conflicts
+                        ],
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            )
             return 0
 
         _print_summary(result)
@@ -125,9 +127,7 @@ def main() -> int:
 
         if result.summary.review_count > 0 and result.summary.auto_match_count == 0:
             return 0
-        if any(
-            decision.decision == MatchDecisionType.AUTO_MATCH for decision in result.decisions
-        ):
+        if any(decision.decision == MatchDecisionType.AUTO_MATCH for decision in result.decisions):
             return 0
         return 0
     except IngestionError as exc:

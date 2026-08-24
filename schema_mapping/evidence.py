@@ -56,9 +56,7 @@ def collect_evidence(
                     value=1.0,
                     weight=weight,
                     contribution=weight,
-                    description=(
-                        f"Header contains canonical token '{canonical_field}'."
-                    ),
+                    description=(f"Header contains canonical token '{canonical_field}'."),
                     source="header_token_match",
                 )
             )
@@ -92,9 +90,7 @@ def collect_evidence(
                 value=lexical_value,
                 weight=weight,
                 contribution=contribution,
-                description=(
-                    f"Lexical similarity between header and '{canonical_field}'."
-                ),
+                description=(f"Lexical similarity between header and '{canonical_field}'."),
                 source="difflib.SequenceMatcher",
             )
         )
@@ -110,8 +106,7 @@ def collect_evidence(
                 weight=weight,
                 contribution=weight,
                 description=(
-                    f"Inferred type '{inferred_type}' is compatible with "
-                    f"'{canonical_field}'."
+                    f"Inferred type '{inferred_type}' is compatible with '{canonical_field}'."
                 ),
                 source="type_inference",
             )
@@ -125,8 +120,7 @@ def collect_evidence(
                 weight=weight,
                 contribution=weight,
                 description=(
-                    f"Inferred type '{inferred_type}' is incompatible with "
-                    f"'{canonical_field}'."
+                    f"Inferred type '{inferred_type}' is incompatible with '{canonical_field}'."
                 ),
                 source="type_inference",
             )

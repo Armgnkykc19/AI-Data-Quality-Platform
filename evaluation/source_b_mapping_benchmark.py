@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dataset.generator.sources import (
-    SOURCE_B_COLUMN_SETS,
-    source_b_expected_mapping,
-)
 from ingestion.config import load_ingestion_config
 from ingestion.parser import parse_file
 from profiling.profiler import profile_dataset
 from schema_mapping.engine import build_mapping_plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_EXPECTED_MAPPINGS_PATH = (
+    PROJECT_ROOT / "evaluation" / "fixtures" / "source_b_expected_mappings.json"
+)
 
 SOURCE_B_SAMPLE_ROWS = [
     {
@@ -93,29 +93,31 @@ class SourceBMappingBenchmarkResult:
         return self.incorrect_mappings == 0 and self.missed_mappings == 0
 
 
+def load_source_b_expected_mappings(
+    path: Path = DEFAULT_EXPECTED_MAPPINGS_PATH,
+) -> list[dict[str, object]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    layouts = data.get("layouts", [])
+    if not isinstance(layouts, list) or not layouts:
+        raise ValueError("source_b_expected_mappings.json must contain layouts")
+    return layouts
+
+
 def _canonical_to_source_row(
     column_set: list[str],
     canonical_row: dict[str, str],
     *,
     layout_index: int,
     row_index: int,
+    reverse_map: dict[str, str],
 ) -> dict[str, str]:
-    from dataset.generator.sources import SOURCE_B_FIELD_MAP
-
-    reverse_map: dict[str, str] = {}
-    for column in column_set:
-        if column in {"source_record_id", "source_name"}:
-            continue
-        canonical_field = SOURCE_B_FIELD_MAP.get(column, column)
-        reverse_map[canonical_field] = column
-
     row: dict[str, str] = {
         "source_record_id": f"source_b-{row_index:06d}",
         "source_name": "source_b",
     }
     for canonical_field, value in canonical_row.items():
-        column = reverse_map.get(canonical_field, canonical_field)
-        if column in column_set:
+        column = reverse_map.get(canonical_field)
+        if column and column in column_set:
             row[column] = value
 
     if "legacy_code" in column_set:
@@ -128,9 +130,20 @@ def _canonical_to_source_row(
     return row
 
 
-def _build_source_b_csv(column_set: list[str], *, layout_index: int) -> str:
+def _build_source_b_csv(
+    column_set: list[str],
+    *,
+    layout_index: int,
+    reverse_map: dict[str, str],
+) -> str:
     rows = [
-        _canonical_to_source_row(column_set, sample, layout_index=layout_index, row_index=index)
+        _canonical_to_source_row(
+            column_set,
+            sample,
+            layout_index=layout_index,
+            row_index=index,
+            reverse_map=reverse_map,
+        )
         for index, sample in enumerate(SOURCE_B_SAMPLE_ROWS, start=1)
     ]
     buffer = io.StringIO()
@@ -140,14 +153,33 @@ def _build_source_b_csv(column_set: list[str], *, layout_index: int) -> str:
     return buffer.getvalue()
 
 
-def run_source_b_mapping_benchmark() -> SourceBMappingBenchmarkResult:
+def run_source_b_mapping_benchmark(
+    *,
+    expected_mappings_path: Path = DEFAULT_EXPECTED_MAPPINGS_PATH,
+) -> SourceBMappingBenchmarkResult:
     result = SourceBMappingBenchmarkResult()
     try:
+        layouts = load_source_b_expected_mappings(expected_mappings_path)
         ingestion_config = load_ingestion_config()
-        result.layout_count = len(SOURCE_B_COLUMN_SETS)
+        result.layout_count = len(layouts)
 
-        for layout_index, column_set in enumerate(SOURCE_B_COLUMN_SETS):
-            csv_text = _build_source_b_csv(column_set, layout_index=layout_index)
+        for layout in layouts:
+            layout_index = int(layout["layout_id"])
+            column_set = [str(item) for item in layout["column_order"]]
+            expected_columns = layout["columns"]
+            reverse_map = {
+                str(spec["canonical_field"]): column
+                for column, spec in expected_columns.items()
+                if isinstance(spec, dict)
+                and spec.get("canonical_field") is not None
+                and spec.get("decision") == "AUTO_MAP"
+            }
+
+            csv_text = _build_source_b_csv(
+                column_set,
+                layout_index=layout_index,
+                reverse_map=reverse_map,
+            )
             path = PROJECT_ROOT / f"evaluation/artifacts/source_b_layout_{layout_index}.csv"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(csv_text, encoding="utf-8")
@@ -155,19 +187,19 @@ def run_source_b_mapping_benchmark() -> SourceBMappingBenchmarkResult:
             parsed = parse_file(path, config=ingestion_config)
             profile = profile_dataset(parsed, ingestion_config)
             plan = build_mapping_plan(parsed, profile=profile)
-            mapping_by_source = {
-                item.source_column: item for item in plan.column_mappings
-            }
+            mapping_by_source = {item.source_column: item for item in plan.column_mappings}
 
             for column in column_set:
-                expected_field, expected_decision = source_b_expected_mapping(column)
+                expectation = expected_columns.get(column)
+                if not isinstance(expectation, dict):
+                    continue
+                expected_field = expectation.get("canonical_field")
+                expected_decision = str(expectation.get("decision", "UNMAPPED"))
                 result.labeled_column_count += 1
                 actual = mapping_by_source.get(column)
                 if actual is None:
                     result.missed_mappings += 1
-                    result.messages.append(
-                        f"missed:layout_{layout_index}:{column}:missing_column"
-                    )
+                    result.messages.append(f"missed:layout_{layout_index}:{column}:missing_column")
                     continue
 
                 if expected_decision == "UNMAPPED":

@@ -152,25 +152,20 @@ def run_normalization_benchmark(*, dataset_path: Path) -> NormalizationBenchmark
         )
         if normalized == before_value:
             result.correct_transformations += 1
-            result.messages.append(
-                f"correct:{corruption_type}:{field_name}"
-            )
+            result.messages.append(f"correct:{corruption_type}:{field_name}")
         elif normalized == after_value:
             result.missed_transformations += 1
             result.failures_by_category["MISSED_TRANSFORMATION"] = (
                 result.failures_by_category.get("MISSED_TRANSFORMATION", 0) + 1
             )
-            result.messages.append(
-                f"missed:{corruption_type}:{field_name}:{after_value}"
-            )
+            result.messages.append(f"missed:{corruption_type}:{field_name}:{after_value}")
         else:
             result.incorrect_transformations += 1
             result.failures_by_category["INCORRECT_TRANSFORMATION"] = (
                 result.failures_by_category.get("INCORRECT_TRANSFORMATION", 0) + 1
             )
             result.messages.append(
-                f"incorrect:{corruption_type}:{field_name}:"
-                f"expected={before_value},got={normalized}"
+                f"incorrect:{corruption_type}:{field_name}:expected={before_value},got={normalized}"
             )
 
     if result.expected_transformations == 0:

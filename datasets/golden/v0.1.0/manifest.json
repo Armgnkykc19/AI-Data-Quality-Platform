@@ -1,6 +1,6 @@
 {
   "version": "0.1.0",
-  "generated_at": "2026-08-13T14:01:59.483661+00:00",
+  "generated_at": "2026-08-24T12:20:26.494293+00:00",
   "seed": 42,
   "record_count": 10000,
   "expected_counts": {
@@ -41,13 +41,13 @@
     },
     "ground_truth_summary": {
       "path": "ground_truth\\summary.json",
-      "sha256": "a7987f586e4060e15a1c8c07458b91e51d64e2c88f2fb067db0370d39baeb49a",
-      "size_bytes": 1763738
+      "sha256": "5d3e634fade9a79926c64ff67f7a4a616c9635f84388b3e0ad6bb28d21e85ec3",
+      "size_bytes": 1763769
     },
     "hard_negatives": {
       "path": "hard_cases\\hard_negatives.csv",
-      "sha256": "83f5b7b879163d766ced0063084f290da81f2ae347f245e561ab4548d13685df",
-      "size_bytes": 67493
+      "sha256": "b79ffa45d5a877cfb52b9cb1c701d66f826d701e986ae34e6de1d5e80449271c",
+      "size_bytes": 67370
     },
     "hard_positives": {
       "path": "hard_cases\\hard_positives.csv",
@@ -56,8 +56,8 @@
     },
     "person_splits": {
       "path": "splits\\person_splits.json",
-      "sha256": "ffef8811dc9f9b647a350cd7143306c116800a5712c4c16484b8f760af068dee",
-      "size_bytes": 170066
+      "sha256": "ff11d83898eb5a6cff5b68ce803f9d6f87964dc7c798681a7aea409fbedc136c",
+      "size_bytes": 170093
     },
     "source_a": {
       "path": "sources\\source_a.csv",
@@ -76,7 +76,7 @@
     }
   },
   "generation_config": {
-    "dataset_config": "{'version': '0.1.0', 'seed': 42, 'generation': {'record_count': 10000, 'min_record_count': 5000, 'max_record_count': 20000}, 'output': {'base_directory': 'datasets/golden/v0.1.0'}, 'schema': {'config_path': 'configs/canonical_schema.yaml'}, 'splits': {'train_ratio': 0.7, 'validation_ratio': 0.15, 'test_ratio': 0.15, 'holdout_seed': 99}, 'sources': {'source_a': {'enabled': True, 'corruption_profile': 'formatting_noise'}, 'source_b': {'enabled': True, 'corruption_profile': 'schema_variation'}, 'source_c': {'enabled': True, 'corruption_profile': 'semantic_noise'}}, 'hard_cases': {'hard_positives_count': 200, 'hard_negatives_count': 200, 'hard_negative_similarity_seed': 7}, 'malformed': {'enabled': True, 'output_subdirectory': 'malformed'}}",
+    "dataset_config": "{'version': '0.1.0', 'seed': 42, 'generation': {'record_count': 10000, 'min_record_count': 5000, 'max_record_count': 20000}, 'output': {'base_directory': 'datasets/golden/v0.1.0'}, 'schema': {'config_path': 'configs/canonical_schema.yaml'}, 'splits': {'train_ratio': 0.6, 'validation_ratio': 0.15, 'test_ratio': 0.15, 'final_holdout_ratio': 0.1, 'holdout_seed': 99, 'min_hard_negative_pairs_per_eval_split': {'validation': 5, 'test': 5, 'final_holdout': 5}}, 'sources': {'source_a': {'enabled': True, 'corruption_profile': 'formatting_noise'}, 'source_b': {'enabled': True, 'corruption_profile': 'schema_variation'}, 'source_c': {'enabled': True, 'corruption_profile': 'semantic_noise'}}, 'hard_cases': {'hard_positives_count': 200, 'hard_negatives_count': 200, 'hard_negative_similarity_seed': 7}, 'malformed': {'enabled': True, 'output_subdirectory': 'malformed'}}",
     "canonical_fields": [
       "person_id",
       "first_name",

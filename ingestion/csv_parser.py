@@ -245,9 +245,7 @@ def parse_csv_file(path: Path, config: IngestionConfig) -> ParsedDataset:
                         row_number=index,
                         raw_values=tuple(raw_row),
                         reason_code="inconsistent_column_count",
-                        message=(
-                            f"Expected {len(headers)} columns, found {len(raw_row)}."
-                        ),
+                        message=(f"Expected {len(headers)} columns, found {len(raw_row)}."),
                     )
                 )
                 dataset.issues.append(

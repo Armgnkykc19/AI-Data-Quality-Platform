@@ -11,7 +11,11 @@ from typing import Any
 from dataset.config import CANONICAL_FIELDS, load_schema_config
 from dataset.generator.malformed import MALFORMED_FIXTURES
 from dataset.manifest import compute_file_sha256
-from dataset.splits import validate_no_split_leakage
+from dataset.splits import (
+    validate_hard_negative_coverage,
+    validate_hard_negative_pair_atomicity,
+    validate_no_split_leakage,
+)
 
 
 @dataclass(frozen=True)
@@ -40,9 +44,7 @@ def validate_dataset(dataset_path: Path) -> ValidationResult:
 
     manifest_path = dataset_path / "manifest.json"
     if not manifest_path.exists():
-        issues.append(
-            ValidationIssue("error", "missing_manifest", "manifest.json is required")
-        )
+        issues.append(ValidationIssue("error", "missing_manifest", "manifest.json is required"))
         return ValidationResult(passed=False, issues=issues)
 
     manifest = _load_json(manifest_path)
@@ -95,6 +97,29 @@ def validate_dataset(dataset_path: Path) -> ValidationResult:
         validate_no_split_leakage(splits)
     except ValueError as exc:
         issues.append(ValidationIssue("error", "split_leakage", str(exc)))
+
+    hard_negative_person_pairs = [
+        (str(pair["person_id_a"]), str(pair["person_id_b"])) for pair in hard_negative_pairs
+    ]
+    if splits and hard_negative_person_pairs:
+        try:
+            validate_hard_negative_pair_atomicity(
+                splits=splits,
+                hard_negative_pairs=hard_negative_person_pairs,
+            )
+        except ValueError as exc:
+            issues.append(ValidationIssue("error", "hard_negative_split", str(exc)))
+        split_config = _load_json(dataset_path / "config" / "dataset_config.json").get("splits", {})
+        minimums = split_config.get("min_hard_negative_pairs_per_eval_split")
+        if isinstance(minimums, dict):
+            try:
+                validate_hard_negative_coverage(
+                    splits=splits,
+                    hard_negative_pairs=hard_negative_person_pairs,
+                    minimum_per_split={str(k): int(v) for k, v in minimums.items()},
+                )
+            except ValueError as exc:
+                issues.append(ValidationIssue("error", "hard_negative_coverage", str(exc)))
 
     canonical_path = dataset_path / "clean" / "canonical.csv"
     if canonical_path.exists():
@@ -198,9 +223,7 @@ def validate_dataset(dataset_path: Path) -> ValidationResult:
         try:
             load_schema_config(schema_path)
         except (ValueError, FileNotFoundError) as exc:
-            issues.append(
-                ValidationIssue("error", "invalid_schema", str(exc))
-            )
+            issues.append(ValidationIssue("error", "invalid_schema", str(exc)))
 
     for key, expected in expected_counts.items():
         if key.endswith("_records") and key != "corruption_events":

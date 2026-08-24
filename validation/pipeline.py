@@ -65,9 +65,7 @@ def _build_summary(records: list) -> ValidationSummary:
         summary.warning_count += record.warning_count
         summary.info_count += record.info_count
         for issue in record.issues:
-            summary.issues_by_rule[issue.rule_id] = (
-                summary.issues_by_rule.get(issue.rule_id, 0) + 1
-            )
+            summary.issues_by_rule[issue.rule_id] = summary.issues_by_rule.get(issue.rule_id, 0) + 1
             summary.issues_by_field[issue.field_name] = (
                 summary.issues_by_field.get(issue.field_name, 0) + 1
             )

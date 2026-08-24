@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Evaluation-only full-scale entity resolution audit. Not used in production."""
+
 from __future__ import annotations
 
 import json
@@ -249,9 +250,7 @@ def run_full_audit(
             detail["blocking_reasons"] = [
                 reason.reason_type.value for reason in decision.comparison.candidate_reasons
             ]
-            detail["evidence"] = [
-                item.evidence_type.value for item in decision.comparison.evidence
-            ]
+            detail["evidence"] = [item.evidence_type.value for item in decision.comparison.evidence]
             detail["conflicts"] = [
                 item.conflict_type.value for item in decision.comparison.conflicts
             ]
@@ -304,9 +303,7 @@ def run_full_audit(
     sum(
         1
         for pair in positive_pairs
-        if (decision := decisions.get(
-            pair_key(pair.source_record_id_a, pair.source_record_id_b)
-        ))
+        if (decision := decisions.get(pair_key(pair.source_record_id_a, pair.source_record_id_b)))
         is not None
         and decision.decision == MatchDecisionType.AUTO_MATCH
     )
@@ -364,9 +361,7 @@ def run_full_audit(
             "auto_match": decision_counts.get("AUTO_MATCH", 0),
             "review": decision_counts.get("REVIEW", 0),
             "no_match": decision_counts.get("NO_MATCH", 0),
-            "auto_match_rate": round(
-                decision_counts.get("AUTO_MATCH", 0) / total_decisions, 6
-            )
+            "auto_match_rate": round(decision_counts.get("AUTO_MATCH", 0) / total_decisions, 6)
             if total_decisions
             else 0.0,
             "review_rate": round(decision_counts.get("REVIEW", 0) / total_decisions, 6)
@@ -411,9 +406,7 @@ def run_full_audit(
             "auto_match_incorrect": benchmark.auto_match_incorrect,
             "auto_match_precision": round(benchmark.auto_match_precision, 6),
             "auto_match_recall_on_labeled_positives": round(benchmark.recall, 6),
-            "auto_match_coverage_on_labeled_positives": round(
-                benchmark.auto_match_coverage, 6
-            ),
+            "auto_match_coverage_on_labeled_positives": round(benchmark.auto_match_coverage, 6),
             "denominators": {
                 "auto_match_precision": "correct AUTO_MATCH / all AUTO_MATCH in split",
                 "auto_match_recall_on_labeled_positives": (

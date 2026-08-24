@@ -69,8 +69,7 @@ def load_ingestion_config(path: Path = DEFAULT_INGESTION_CONFIG) -> IngestionCon
     max_columns = int(limits.get("max_column_count", 0))
     if max_file_size <= 0 or max_rows <= 0 or max_columns <= 0:
         raise ValueError(
-            "limits must define positive max_file_size_bytes, "
-            "max_row_count, max_column_count"
+            "limits must define positive max_file_size_bytes, max_row_count, max_column_count"
         )
 
     delimiters = csv.get("supported_delimiters", [])

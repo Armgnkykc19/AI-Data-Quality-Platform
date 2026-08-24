@@ -16,9 +16,7 @@ from dataset.manifest import write_json  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate the canonical clean-base dataset."
-    )
+    parser = argparse.ArgumentParser(description="Generate the canonical clean-base dataset.")
     parser.add_argument(
         "--config",
         type=Path,

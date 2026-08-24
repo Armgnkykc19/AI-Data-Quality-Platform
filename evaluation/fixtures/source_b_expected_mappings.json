@@ -1,0 +1,95 @@
+{
+  "version": "0.1.0",
+  "description": "Locked evaluation-only Source B expected column mappings. Independent from production mapping engine and generator runtime truth.",
+  "layouts": [
+    {
+      "layout_id": 0,
+      "column_order": [
+        "source_record_id",
+        "source_name",
+        "ad",
+        "soyad",
+        "e_mail",
+        "gsm",
+        "sirket",
+        "sehir",
+        "ilce",
+        "adres",
+        "legacy_code"
+      ],
+      "columns": {
+        "source_record_id": {"canonical_field": null, "decision": "UNMAPPED"},
+        "source_name": {"canonical_field": null, "decision": "UNMAPPED"},
+        "ad": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+        "soyad": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+        "e_mail": {"canonical_field": "email", "decision": "AUTO_MAP"},
+        "gsm": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+        "sirket": {"canonical_field": "company", "decision": "AUTO_MAP"},
+        "sehir": {"canonical_field": "city", "decision": "AUTO_MAP"},
+        "ilce": {"canonical_field": "district", "decision": "AUTO_MAP"},
+        "adres": {"canonical_field": "address", "decision": "AUTO_MAP"},
+        "legacy_code": {"canonical_field": null, "decision": "UNMAPPED"}
+      }
+    },
+    {
+      "layout_id": 1,
+      "column_order": [
+        "source_name",
+        "source_record_id",
+        "given_name",
+        "surname",
+        "email_address",
+        "mobile",
+        "organization",
+        "il",
+        "mahalle",
+        "street",
+        "import_batch",
+        "notes"
+      ],
+      "columns": {
+        "source_name": {"canonical_field": null, "decision": "UNMAPPED"},
+        "source_record_id": {"canonical_field": null, "decision": "UNMAPPED"},
+        "given_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+        "surname": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+        "email_address": {"canonical_field": "email", "decision": "AUTO_MAP"},
+        "mobile": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+        "organization": {"canonical_field": "company", "decision": "AUTO_MAP"},
+        "il": {"canonical_field": "city", "decision": "AUTO_MAP"},
+        "mahalle": {"canonical_field": "district", "decision": "AUTO_MAP"},
+        "street": {"canonical_field": "address", "decision": "AUTO_MAP"},
+        "import_batch": {"canonical_field": null, "decision": "UNMAPPED"},
+        "notes": {"canonical_field": null, "decision": "UNMAPPED"}
+      }
+    },
+    {
+      "layout_id": 2,
+      "column_order": [
+        "source_record_id",
+        "first_name",
+        "last_name",
+        "email",
+        "cep_telefonu",
+        "company",
+        "city",
+        "district",
+        "address",
+        "source_name",
+        "legacy_code"
+      ],
+      "columns": {
+        "source_record_id": {"canonical_field": null, "decision": "UNMAPPED"},
+        "first_name": {"canonical_field": "first_name", "decision": "AUTO_MAP"},
+        "last_name": {"canonical_field": "last_name", "decision": "AUTO_MAP"},
+        "email": {"canonical_field": "email", "decision": "AUTO_MAP"},
+        "cep_telefonu": {"canonical_field": "phone", "decision": "AUTO_MAP"},
+        "company": {"canonical_field": "company", "decision": "AUTO_MAP"},
+        "city": {"canonical_field": "city", "decision": "AUTO_MAP"},
+        "district": {"canonical_field": "district", "decision": "AUTO_MAP"},
+        "address": {"canonical_field": "address", "decision": "AUTO_MAP"},
+        "source_name": {"canonical_field": null, "decision": "UNMAPPED"},
+        "legacy_code": {"canonical_field": null, "decision": "UNMAPPED"}
+      }
+    }
+  ]
+}

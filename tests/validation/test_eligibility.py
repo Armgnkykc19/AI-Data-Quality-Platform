@@ -11,11 +11,7 @@ def test_whitespace_email_issue_is_safe(validation_engine: ValidationEngine) -> 
     record = make_valid_record(email="  test@example.com  ")
     result = validation_engine.validate_record(record)
 
-    issues = [
-        issue
-        for issue in result.issues
-        if issue.rule_id == "text.noncanonical_whitespace"
-    ]
+    issues = [issue for issue in result.issues if issue.rule_id == "text.noncanonical_whitespace"]
     assert len(issues) == 1
     assert issues[0].normalization_eligibility == NormalizationEligibility.SAFE
 

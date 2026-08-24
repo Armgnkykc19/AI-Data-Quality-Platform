@@ -73,10 +73,7 @@ def test_build_golden_dataset_is_reproducible(tmp_path: Path) -> None:
         assert manifest_a_data[key] == manifest_b_data[key]
 
     for name in manifest_a_data["files"]:
-        assert (
-            manifest_a_data["files"][name]["sha256"]
-            == manifest_b_data["files"][name]["sha256"]
-        )
+        assert manifest_a_data["files"][name]["sha256"] == manifest_b_data["files"][name]["sha256"]
 
 
 def test_different_seed_changes_dataset_content(tmp_path: Path) -> None:

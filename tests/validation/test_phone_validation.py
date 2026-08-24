@@ -11,9 +11,7 @@ def test_e164_tr_phone_is_valid(validation_engine: ValidationEngine) -> None:
     result = validation_engine.validate_record(record)
 
     phone_issues = [
-        issue
-        for issue in result.issues
-        if issue.rule_id in {"phone.format", "phone.tr_e164"}
+        issue for issue in result.issues if issue.rule_id in {"phone.format", "phone.tr_e164"}
     ]
     assert phone_issues == []
 

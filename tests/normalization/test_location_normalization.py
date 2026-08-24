@@ -17,6 +17,5 @@ def test_city_alias_normalizes_istanbul_to_canonical_form(
 
     assert normalized == "İstanbul"
     assert any(
-        item.rule_id in {"location.city_alias", "location.city_case"}
-        for item in transformations
+        item.rule_id in {"location.city_alias", "location.city_case"} for item in transformations
     )

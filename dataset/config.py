@@ -81,10 +81,7 @@ def load_dataset_config(path: Path = DEFAULT_DATASET_CONFIG) -> DatasetConfig:
     max_count = int(generation.get("max_record_count", 20000))
 
     if not min_count <= record_count <= max_count:
-        raise ValueError(
-            f"record_count {record_count} must be between "
-            f"{min_count} and {max_count}"
-        )
+        raise ValueError(f"record_count {record_count} must be between {min_count} and {max_count}")
 
     schema_path = PROJECT_ROOT / schema.get("config_path", "configs/canonical_schema.yaml")
     output_base = PROJECT_ROOT / output.get("base_directory", "datasets/golden/v0.1.0")
