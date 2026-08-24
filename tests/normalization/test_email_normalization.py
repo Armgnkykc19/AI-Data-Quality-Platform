@@ -16,9 +16,7 @@ def test_email_trim_removes_surrounding_whitespace(
     )
 
     trim_rules = [
-        item
-        for item in transformations
-        if item.rule_id in {"email.trim", "text.trim_whitespace"}
+        item for item in transformations if item.rule_id in {"email.trim", "text.trim_whitespace"}
     ]
     assert trim_rules
     assert normalized == normalized.strip()

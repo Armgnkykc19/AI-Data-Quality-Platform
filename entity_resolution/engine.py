@@ -35,9 +35,7 @@ def resolve_entities(
     sorted_records = sorted(records, key=lambda item: item.record_id)
     records_by_id = {record.record_id: record for record in sorted_records}
     candidates = generate_candidates(sorted_records, config=resolution_config)
-    decisions = score_and_decide_candidates(
-        candidates, records_by_id, config=resolution_config
-    )
+    decisions = score_and_decide_candidates(candidates, records_by_id, config=resolution_config)
 
     review_queue = tuple(
         sorted(
@@ -74,9 +72,7 @@ def resolve_entities(
     auto_match_count = sum(
         1 for decision in decisions if decision.decision == MatchDecisionType.AUTO_MATCH
     )
-    review_count = sum(
-        1 for decision in decisions if decision.decision == MatchDecisionType.REVIEW
-    )
+    review_count = sum(1 for decision in decisions if decision.decision == MatchDecisionType.REVIEW)
     no_match_count = sum(
         1 for decision in decisions if decision.decision == MatchDecisionType.NO_MATCH
     )

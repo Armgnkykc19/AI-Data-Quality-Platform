@@ -61,9 +61,7 @@ def run_ingestion_smoke_checks(*, malformed_dir: Path) -> tuple[bool, list[str]]
             if exc.code == expected_code:
                 messages.append(f"ingestion_smoke:PASS:{filename}:{exc.code}")
             else:
-                messages.append(
-                    f"ingestion_smoke:error_code_mismatch:{filename}:{exc.code}"
-                )
+                messages.append(f"ingestion_smoke:error_code_mismatch:{filename}:{exc.code}")
                 passed = False
 
     latin5_path = malformed_dir / "latin5_turkish.csv"

@@ -13,10 +13,15 @@ schema:
   config_path: configs/canonical_schema.yaml
 
 splits:
-  train_ratio: 0.70
+  train_ratio: 0.60
   validation_ratio: 0.15
   test_ratio: 0.15
+  final_holdout_ratio: 0.10
   holdout_seed: 99
+  min_hard_negative_pairs_per_eval_split:
+    validation: 0
+    test: 0
+    final_holdout: 0
 
 sources:
   source_a:

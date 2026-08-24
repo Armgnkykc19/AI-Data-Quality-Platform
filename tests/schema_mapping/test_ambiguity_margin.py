@@ -123,9 +123,7 @@ def test_default_apply_never_applies_review_mappings(
     parsed.finalize_accounting()
 
     plan = build_mapping_plan(parsed, profile=profile_dataset(parsed, ingestion_config))
-    contact_mapping = next(
-        item for item in plan.column_mappings if item.source_column == "contact"
-    )
+    contact_mapping = next(item for item in plan.column_mappings if item.source_column == "contact")
     assert contact_mapping.decision == MappingDecisionType.REVIEW
 
     applied = apply_mapping_plan(parsed, plan, config=mapping_config)

@@ -55,17 +55,13 @@ def normalize_parsed_dataset(
     normalization_config = config or load_normalization_config()
     engine = NormalizationEngine(normalization_config)
 
-    validation_by_row = {
-        item.row_number: item for item in (validation_results or [])
-    }
+    validation_by_row = {item.row_number: item for item in (validation_results or [])}
 
     ingestion_config = load_ingestion_config()
     profile = profile_dataset(parsed, ingestion_config)
     mapping_plan = build_mapping_plan(parsed, profile=profile)
     applied = apply_mapping_plan(parsed, mapping_plan)
-    canonical_by_row = {
-        record.row_number: record.canonical_values for record in applied.records
-    }
+    canonical_by_row = {record.row_number: record.canonical_values for record in applied.records}
 
     records = []
     changed_records = 0

@@ -17,11 +17,7 @@ def test_broken_email_is_not_repaired_by_normalization(
     )
 
     assert normalized == raw
-    changed = [
-        item
-        for item in transformations
-        if item.normalized_value != item.original_value
-    ]
+    changed = [item for item in transformations if item.normalized_value != item.original_value]
     assert changed == []
 
 

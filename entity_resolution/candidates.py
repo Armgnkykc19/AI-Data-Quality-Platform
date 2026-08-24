@@ -39,8 +39,6 @@ def score_and_decide_candidates(
 ):
     decisions = []
     for candidate in candidates:
-        comparison = compare_candidate_pair(
-            candidate, records_by_id, config=config
-        )
+        comparison = compare_candidate_pair(candidate, records_by_id, config=config)
         decisions.append(decide_pair_match(comparison, config=config))
     return tuple(decisions)

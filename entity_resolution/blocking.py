@@ -11,12 +11,29 @@ from entity_resolution.models import (
 from entity_resolution.similarity import normalize_email, normalize_phone, normalize_text
 
 
+def _phone_last7_key(record: EntityRecord) -> str | None:
+    normalized = normalize_phone(record.get("phone"))
+    if normalized is None:
+        return None
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if len(digits) < 7:
+        return None
+    return digits[-7:]
+
+
 def _build_blocking_key(
     record: EntityRecord,
     fields: tuple[str, ...],
     *,
     config: EntityResolutionConfig,
+    strategy_id: str | None = None,
 ) -> str | None:
+    if strategy_id == "phone_last7" and fields == ("phone",):
+        key = _phone_last7_key(record)
+        if key is None or len(key) < config.blocking_min_key_length:
+            return None
+        return key
+
     parts: list[str] = []
     for field_name in fields:
         value = record.get(field_name)
@@ -49,9 +66,7 @@ def _pairs_from_bucket(
     reason = CandidateReason(
         reason_type=reason_type,
         blocking_key=blocking_key,
-        description=(
-            f"Records share blocking key '{blocking_key}' via {reason_type.value}."
-        ),
+        description=(f"Records share blocking key '{blocking_key}' via {reason_type.value}."),
     )
     for left_index in range(len(sorted_ids)):
         for right_index in range(left_index + 1, len(sorted_ids)):
@@ -75,7 +90,12 @@ def generate_candidates(
         buckets: dict[str, list[str]] = {}
         reason_type = _strategy_reason_type(strategy)
         for record in records:
-            key = _build_blocking_key(record, strategy.fields, config=config)
+            key = _build_blocking_key(
+                record,
+                strategy.fields,
+                config=config,
+                strategy_id=strategy.strategy_id,
+            )
             if key is None:
                 continue
             buckets.setdefault(key, []).append(record.record_id)

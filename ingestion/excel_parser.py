@@ -157,9 +157,7 @@ def parse_xlsx_file(
                         row_number=row_number,
                         raw_values=tuple("" if value is None else value for value in values_list),
                         reason_code="inconsistent_column_count",
-                        message=(
-                            f"Expected {len(headers)} columns, found {len(values_list)}."
-                        ),
+                        message=(f"Expected {len(headers)} columns, found {len(values_list)}."),
                     )
                 )
                 dataset.issues.append(

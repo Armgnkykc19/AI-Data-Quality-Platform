@@ -233,10 +233,7 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
                     f"| merge_coherence_rate | "
                     f"{real_survivorship.get('merge_coherence_rate', 0.0):.4f} |"
                 ),
-                (
-                    f"| field_match_rate | "
-                    f"{real_survivorship.get('field_match_rate', 0.0):.4f} |"
-                ),
+                (f"| field_match_rate | {real_survivorship.get('field_match_rate', 0.0):.4f} |"),
                 (
                     f"| conflict_preservation_rate | "
                     f"{real_survivorship.get('conflict_preservation_rate', 0.0):.4f} |"

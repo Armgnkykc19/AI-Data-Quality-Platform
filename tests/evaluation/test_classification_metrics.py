@@ -23,8 +23,7 @@ def test_calculate_classification_metrics() -> None:
     assert metrics.precision == pytest.approx(0.8)
     assert metrics.recall == pytest.approx(80 / 90)
     assert metrics.f1 == pytest.approx(
-        2 * metrics.precision * metrics.recall
-        / (metrics.precision + metrics.recall)
+        2 * metrics.precision * metrics.recall / (metrics.precision + metrics.recall)
     )
 
 

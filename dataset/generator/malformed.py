@@ -28,8 +28,7 @@ MALFORMED_FIXTURES: dict[str, dict[str, object]] = {
         "category": "missing_column",
         "description": "Row with fewer columns than the header declares.",
         "content": (
-            "source_record_id,source_name,first_name,last_name,email\n"
-            "hp-000001,hard_positive,Ali\n"
+            "source_record_id,source_name,first_name,last_name,email\nhp-000001,hard_positive,Ali\n"
         ),
         "encoding": "utf-8",
     },
@@ -46,7 +45,7 @@ MALFORMED_FIXTURES: dict[str, dict[str, object]] = {
         "category": "broken_quotes",
         "description": "Unbalanced double quotes inside a quoted field.",
         "content": (
-            'source_record_id,source_name,company\n'
+            "source_record_id,source_name,company\n"
             'hp-000001,hard_positive,"Anadolu Teknoloji A.S.\n'
         ),
         "encoding": "utf-8",

@@ -58,9 +58,7 @@ def test_review_queue_records_are_excluded_from_merged_entities(survivorship_con
 
     assert "rev-1" in result.review_excluded_record_ids
     assert result.entity_for_record("rev-1") is None
-    merged = [
-        entity for entity in result.entities if len(entity.member_record_ids) > 1
-    ]
+    merged = [entity for entity in result.entities if len(entity.member_record_ids) > 1]
     for entity in merged:
         assert "rev-1" not in entity.member_record_ids
 

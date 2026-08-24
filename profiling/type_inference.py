@@ -16,9 +16,7 @@ def infer_type(values: list[str]) -> tuple[str, str, tuple[str, ...]]:
     notes: list[str] = []
     integer_matches = sum(1 for value in values if INTEGER_PATTERN.match(value))
     float_matches = sum(1 for value in values if FLOAT_PATTERN.match(value))
-    boolean_matches = sum(
-        1 for value in values if value.strip().lower() in BOOLEAN_VALUES
-    )
+    boolean_matches = sum(1 for value in values if value.strip().lower() in BOOLEAN_VALUES)
     date_matches = sum(1 for value in values if _is_date(value))
 
     total = len(values)

@@ -7,6 +7,7 @@ from pathlib import Path
 from ingestion.config import load_ingestion_config
 from ingestion.models import ParsedDataset, ParsedRow, SourceMetadata
 from profiling.profiler import profile_dataset
+from schema_mapping.config import load_schema_mapping_config
 from schema_mapping.engine import build_mapping_plan
 from schema_mapping.failure_analysis import classify_failure
 
@@ -33,6 +34,8 @@ class SchemaMappingBenchmarkResult:
     expected_unmapped_count: int = 0
     actual_unmapped_count: int = 0
     correct_unmapped: int = 0
+    critical_field_total: int = 0
+    critical_field_correct: int = 0
     failures_by_category: dict[str, int] = field(default_factory=dict)
     messages: list[str] = field(default_factory=list)
     ran_successfully: bool = True
@@ -77,6 +80,12 @@ class SchemaMappingBenchmarkResult:
         return self.correct_review_routing / self.expected_review_count
 
     @property
+    def critical_field_recall(self) -> float:
+        if self.critical_field_total == 0:
+            return 1.0
+        return self.critical_field_correct / self.critical_field_total
+
+    @property
     def passed(self) -> bool:
         return self.incorrect_mappings == 0 and self.missed_mappings == 0
 
@@ -117,6 +126,8 @@ def run_schema_mapping_benchmark(
     try:
         cases = load_schema_mapping_benchmark_cases(cases_path)
         ingestion_config = load_ingestion_config()
+        mapping_config = load_schema_mapping_config()
+        critical_fields = set(mapping_config.critical_fields)
         result.labeled_case_count = len(cases)
 
         for case in cases:
@@ -131,9 +142,7 @@ def run_schema_mapping_benchmark(
             if not isinstance(expected, dict):
                 continue
 
-            mapping_by_source = {
-                item.source_column: item for item in plan.column_mappings
-            }
+            mapping_by_source = {item.source_column: item for item in plan.column_mappings}
 
             for source_column, expectation in expected.items():
                 if not isinstance(expectation, dict):
@@ -141,6 +150,9 @@ def run_schema_mapping_benchmark(
                 result.labeled_column_count += 1
                 expected_field = expectation.get("canonical_field")
                 expected_decision = str(expectation.get("decision", "UNMAPPED"))
+                is_critical = expected_field in critical_fields
+                if is_critical and expected_decision != "UNMAPPED":
+                    result.critical_field_total += 1
                 actual = mapping_by_source.get(str(source_column))
                 if actual is None:
                     result.missed_mappings += 1
@@ -157,6 +169,8 @@ def run_schema_mapping_benchmark(
                     if actual_decision == "REVIEW":
                         result.correct_review_routing += 1
                         result.correct_mappings += 1
+                        if is_critical and expected_decision != "UNMAPPED":
+                            result.critical_field_correct += 1
                     else:
                         result.missed_review_cases += 1
                         result.missed_mappings += 1
@@ -171,6 +185,8 @@ def run_schema_mapping_benchmark(
                     if actual_decision == "UNMAPPED":
                         result.correct_unmapped += 1
                         result.correct_mappings += 1
+                        if is_critical and expected_decision != "UNMAPPED":
+                            result.critical_field_correct += 1
                     else:
                         result.incorrect_mappings += 1
                         result.messages.append(
@@ -182,6 +198,8 @@ def run_schema_mapping_benchmark(
                 if expected_decision == "CONFLICT":
                     if actual_decision == "CONFLICT":
                         result.correct_mappings += 1
+                        if is_critical and expected_decision != "UNMAPPED":
+                            result.critical_field_correct += 1
                     else:
                         result.incorrect_mappings += 1
                         result.messages.append(
@@ -195,6 +213,8 @@ def run_schema_mapping_benchmark(
                     if actual_field == expected_field:
                         result.auto_map_correct += 1
                         result.correct_mappings += 1
+                        if is_critical and expected_decision != "UNMAPPED":
+                            result.critical_field_correct += 1
                     else:
                         result.auto_map_incorrect += 1
                         result.incorrect_mappings += 1
@@ -204,6 +224,8 @@ def run_schema_mapping_benchmark(
                         )
                 elif actual_field == expected_field and actual_decision == expected_decision:
                     result.correct_mappings += 1
+                    if is_critical and expected_decision != "UNMAPPED":
+                        result.critical_field_correct += 1
                 else:
                     result.missed_mappings += 1
                     result.messages.append(

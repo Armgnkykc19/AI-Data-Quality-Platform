@@ -31,9 +31,7 @@ def load_evaluation_ground_truth(dataset_path: Path) -> EvaluationGroundTruth:
     with summary_path.open("r", encoding="utf-8") as file:
         summary = json.load(file)
 
-    positive_pairs = tuple(
-        MatchPair(**item) for item in summary.get("positive_pairs", [])
-    )
+    positive_pairs = tuple(MatchPair(**item) for item in summary.get("positive_pairs", []))
     hard_negative_pairs = tuple(
         MatchPair(**item) for item in summary.get("hard_negative_pairs", [])
     )

@@ -101,18 +101,14 @@ def decide_pair_match(
                 decision=MatchDecisionType.REVIEW,
                 reason="Score meets AUTO_MATCH threshold but strong identity evidence is missing.",
             )
-        if config.weak_only_forces_review and is_weak_only_evidence(
-            evidence, config=config
-        ):
+        if config.weak_only_forces_review and is_weak_only_evidence(evidence, config=config):
             return MatchDecision(
                 pair=comparison.pair,
                 comparison=comparison,
                 decision=MatchDecisionType.REVIEW,
                 reason="Only weak or fuzzy evidence present; unsafe for AUTO_MATCH.",
             )
-        if config.forbid_severe_conflicts and has_severe_conflict(
-            conflicts, config=config
-        ):
+        if config.forbid_severe_conflicts and has_severe_conflict(conflicts, config=config):
             return MatchDecision(
                 pair=comparison.pair,
                 comparison=comparison,

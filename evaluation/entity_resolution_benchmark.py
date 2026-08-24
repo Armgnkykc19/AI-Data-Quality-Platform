@@ -93,8 +93,7 @@ def _load_entity_records_from_dataset(dataset_path: Path) -> list:
 
 def _candidate_pair_set(result) -> set[tuple[str, str]]:
     return {
-        (candidate.pair.record_a_id, candidate.pair.record_b_id)
-        for candidate in result.candidates
+        (candidate.pair.record_a_id, candidate.pair.record_b_id) for candidate in result.candidates
     }
 
 
@@ -156,9 +155,7 @@ def run_entity_resolution_benchmark(
             key = pair_key(pair.source_record_id_a, pair.source_record_id_b)
             if key in candidate_pairs:
                 recalled += 1
-        result.candidate_recall = (
-            recalled / len(positive_pairs) if positive_pairs else 1.0
-        )
+        result.candidate_recall = recalled / len(positive_pairs) if positive_pairs else 1.0
 
         tp = fp = fn = tn = 0
         failures: Counter[str] = Counter()
@@ -239,16 +236,16 @@ def run_entity_resolution_benchmark(
         result.auto_match_total = auto_total
         result.auto_match_correct = auto_correct
         result.auto_match_incorrect = auto_incorrect
-        result.auto_match_precision = (
-            auto_correct / auto_total if auto_total else 1.0
-        )
+        result.auto_match_precision = auto_correct / auto_total if auto_total else 1.0
         result.auto_match_coverage = (
             sum(
                 1
                 for pair in positive_pairs
-                if (decision := decisions.get(
-                    pair_key(pair.source_record_id_a, pair.source_record_id_b)
-                ))
+                if (
+                    decision := decisions.get(
+                        pair_key(pair.source_record_id_a, pair.source_record_id_b)
+                    )
+                )
                 is not None
                 and decision.decision == MatchDecisionType.AUTO_MATCH
             )
@@ -256,13 +253,9 @@ def run_entity_resolution_benchmark(
             if positive_pairs
             else 0.0
         )
-        result.false_match_rate = (
-            auto_incorrect / auto_total if auto_total else 0.0
-        )
+        result.false_match_rate = auto_incorrect / auto_total if auto_total else 0.0
 
-        hard_positive_pairs = [
-            pair for pair in positive_pairs if pair.pair_type == "hard_positive"
-        ]
+        hard_positive_pairs = [pair for pair in positive_pairs if pair.pair_type == "hard_positive"]
         hard_negative_pairs = list(negative_pairs)
         result.hard_positive_total = len(hard_positive_pairs)
         result.hard_negative_total = len(hard_negative_pairs)

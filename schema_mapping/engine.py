@@ -59,8 +59,7 @@ def build_mapping_plan(
     provisional_auto_maps = {
         header: candidates[0].canonical_field
         for header, candidates in column_candidates.items()
-        if candidates
-        and candidates[0].score >= mapping_config.review_threshold
+        if candidates and candidates[0].score >= mapping_config.review_threshold
     }
     collision_map = detect_collisions(provisional_auto_maps)
 
@@ -100,9 +99,7 @@ def build_mapping_plan(
         if mapping.decision.value == "AUTO_MAP" and mapping.canonical_field
     }
     missing_fields = tuple(
-        field
-        for field in mapping_config.mappable_fields
-        if field not in auto_map_fields
+        field for field in mapping_config.mappable_fields if field not in auto_map_fields
     )
 
     summary = MappingPlanSummary(

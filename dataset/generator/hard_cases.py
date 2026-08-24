@@ -141,14 +141,19 @@ def generate_hard_negatives(
     pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
     indexed = list(canonical_records)
     seen_pair_keys: set[frozenset[str]] = set()
+    used_person_ids: set[str] = set()
 
     def add_pair(left: dict[str, Any], right: dict[str, Any]) -> bool:
         if left["person_id"] == right["person_id"]:
+            return False
+        if left["person_id"] in used_person_ids or right["person_id"] in used_person_ids:
             return False
         key = frozenset({left["person_id"], right["person_id"]})
         if key in seen_pair_keys:
             return False
         seen_pair_keys.add(key)
+        used_person_ids.add(left["person_id"])
+        used_person_ids.add(right["person_id"])
         pairs.append((left, right))
         return True
 
@@ -178,9 +183,7 @@ def generate_hard_negatives(
             add_pair(left, right)
 
     if len(pairs) < count:
-        raise ValueError(
-            f"Could not generate enough hard-negative pairs: {len(pairs)} < {count}"
-        )
+        raise ValueError(f"Could not generate enough hard-negative pairs: {len(pairs)} < {count}")
 
     rows: list[dict[str, Any]] = []
     source_records: list[SourceRecord] = []

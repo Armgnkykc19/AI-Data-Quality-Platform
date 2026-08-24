@@ -14,6 +14,8 @@ class MatchDecisionType(StrEnum):
 class BlockingReasonType(StrEnum):
     EMAIL_EXACT_BLOCK = "EMAIL_EXACT_BLOCK"
     PHONE_EXACT_BLOCK = "PHONE_EXACT_BLOCK"
+    PHONE_LAST7_BLOCK = "PHONE_LAST7_BLOCK"
+    NAME_SURNAME_BLOCK = "NAME_SURNAME_BLOCK"
     NAME_CITY_BLOCK = "NAME_CITY_BLOCK"
     SURNAME_COMPANY_BLOCK = "SURNAME_COMPANY_BLOCK"
     COMPANY_CITY_BLOCK = "COMPANY_CITY_BLOCK"
@@ -224,9 +226,7 @@ class ResolutionResult:
                 "record_count": self.summary.record_count,
                 "possible_pair_count": self.summary.possible_pair_count,
                 "candidate_pair_count": self.summary.candidate_pair_count,
-                "candidate_reduction_ratio": round(
-                    self.summary.candidate_reduction_ratio, 6
-                ),
+                "candidate_reduction_ratio": round(self.summary.candidate_reduction_ratio, 6),
                 "auto_match_count": self.summary.auto_match_count,
                 "review_count": self.summary.review_count,
                 "no_match_count": self.summary.no_match_count,

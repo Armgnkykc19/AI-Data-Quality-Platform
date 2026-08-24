@@ -42,10 +42,7 @@ def _apply_case_change(value: str, rng: random.Random) -> str:
         return value.lower()
     if mode == "title":
         return value.title()
-    return "".join(
-        char.upper() if rng.random() < 0.5 else char.lower()
-        for char in value
-    )
+    return "".join(char.upper() if rng.random() < 0.5 else char.lower() for char in value)
 
 
 def _apply_unicode_turkish(value: str, rng: random.Random) -> str:

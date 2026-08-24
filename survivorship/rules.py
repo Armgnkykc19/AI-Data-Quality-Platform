@@ -156,9 +156,7 @@ def _select_completeness_longest_legacy(
     config: SurvivorshipConfig,
 ) -> tuple[str | None, FieldProvenance]:
     non_empty = [
-        (record, raw, normalized)
-        for record, raw, normalized in collected
-        if normalized is not None
+        (record, raw, normalized) for record, raw, normalized in collected if normalized is not None
     ]
     if not non_empty:
         record = collected[0][0]

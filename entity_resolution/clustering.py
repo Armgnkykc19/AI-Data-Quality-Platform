@@ -58,9 +58,7 @@ def build_entity_clusters(
     config: EntityResolutionConfig,
 ) -> tuple[tuple[EntityCluster, ...], int]:
     auto_edges = [
-        decision
-        for decision in decisions
-        if decision.decision == MatchDecisionType.AUTO_MATCH
+        decision for decision in decisions if decision.decision == MatchDecisionType.AUTO_MATCH
     ]
     if not auto_edges:
         return (), 0
@@ -85,9 +83,7 @@ def build_entity_clusters(
             continue
 
         proposed_members = sorted(
-            member
-            for member in members
-            if union_find.find(member) in {left_root, right_root}
+            member for member in members if union_find.find(member) in {left_root, right_root}
         )
         if config.cluster_conflict_guard:
             has_conflict, description = _cluster_has_severe_internal_conflict(

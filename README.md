@@ -92,7 +92,24 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 07 (Survivorship & Canonical Entity Construction).
+Early development — Sprint 7B (Reliability & Acceptance Hardening) on top of merged Sprint 07.
+
+## Sprint 7B
+
+Sprint 7B hardens evaluation and acceptance across Sprints 01–07 without adding new product features.
+
+Highlights:
+
+- real product hard gates when running `evaluation.run --dataset ...` (separate from fixture smoke),
+- row accounting audit (`discovered = accepted + rejected`, zero silent row loss),
+- independent Source B benchmark fixture (`evaluation/fixtures/source_b_expected_mappings.json`),
+- four-way dataset splits including locked `final_holdout`,
+- atomic hard-negative pair split assignment,
+- validation-only threshold sweep (recommendation only, no auto-write),
+- critical-field schema mapping recall,
+- index-based blocking recall improvements (`phone_last7`, `first_name`+`last_name`).
+
+See `docs/development-reports/SPRINT_07B_RELIABILITY_AND_ACCEPTANCE.md` and `docs/SPRINT_NUMBERING.md`.
 
 ## Sprint 07
 
@@ -123,7 +140,7 @@ Run evaluation with real survivorship metrics:
 python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
 ```
 
-Fixture hard gates remain infrastructure smoke; real survivorship metrics are reported separately when running evaluation with `--dataset`.
+Fixture hard gates remain infrastructure smoke; real product hard gates and benchmark metrics are evaluated separately when running evaluation with `--dataset`.
 
 ## Sprint 06
 

@@ -20,6 +20,7 @@ class SchemaMappingConfig:
     version: str
     canonical_schema_path: Path
     mappable_fields: tuple[str, ...]
+    critical_fields: tuple[str, ...]
     non_auto_mappable_fields: tuple[str, ...]
     aliases: dict[str, tuple[str, ...]]
     alias_to_canonical: dict[str, str]
@@ -96,15 +97,20 @@ def load_schema_mapping_config(
     aliases: dict[str, tuple[str, ...]] = {}
     for field_name, alias_values in aliases_raw.items():
         if not isinstance(alias_values, list):
-            raise SchemaMappingConfigError(
-                f"aliases.{field_name} must be a list of alias strings"
-            )
+            raise SchemaMappingConfigError(f"aliases.{field_name} must be a list of alias strings")
         aliases[str(field_name)] = tuple(str(item) for item in alias_values)
 
     mappable_fields = tuple(str(item) for item in data.get("mappable_fields", []))
+    critical_fields = tuple(str(item) for item in data.get("critical_fields", []))
     non_auto_mappable = tuple(str(item) for item in data.get("non_auto_mappable_fields", []))
     if not mappable_fields:
         raise SchemaMappingConfigError("mappable_fields must not be empty")
+
+    for field_name in critical_fields:
+        if field_name not in mappable_fields:
+            raise SchemaMappingConfigError(
+                f"critical field '{field_name}' must also be listed in mappable_fields"
+            )
 
     for field_name in mappable_fields:
         if field_name not in aliases:
@@ -125,9 +131,7 @@ def load_schema_mapping_config(
     negative_weight_keys = {"type_incompatibility", "pattern_numeric"}
     for weight_name, weight_value in weights.items():
         if float(weight_value) < 0 and weight_name not in negative_weight_keys:
-            raise SchemaMappingConfigError(
-                f"negative weight not supported for '{weight_name}'"
-            )
+            raise SchemaMappingConfigError(f"negative weight not supported for '{weight_name}'")
 
     type_compat_raw = data.get("type_compatibility", {})
     if not isinstance(type_compat_raw, dict):
@@ -150,14 +154,14 @@ def load_schema_mapping_config(
 
     reporting = data.get("reporting", {})
     ambiguous_headers = frozenset(
-        _normalize_alias_key(str(item))
-        for item in data.get("ambiguous_headers", [])
+        _normalize_alias_key(str(item)) for item in data.get("ambiguous_headers", [])
     )
 
     return SchemaMappingConfig(
         version=str(data.get("version", "0.1.0")),
         canonical_schema_path=canonical_schema_path,
         mappable_fields=mappable_fields,
+        critical_fields=critical_fields,
         non_auto_mappable_fields=non_auto_mappable,
         aliases=aliases,
         alias_to_canonical=_build_alias_lookup(aliases),
