@@ -22,6 +22,8 @@ from evaluation.reporting import (
     ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
     EVALUATION_MODE_FIXTURE_SMOKE,
     EVALUATION_MODE_MIXED,
+    HUMAN_REVIEW_QUALITY_AVAILABLE,
+    HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE,
     PRODUCT_QUALITY_NOT_YET_AVAILABLE,
     PRODUCT_QUALITY_PARTIALLY_AVAILABLE,
     SCHEMA_MAPPING_QUALITY_AVAILABLE,
@@ -32,6 +34,7 @@ from evaluation.reporting import (
     write_json_report,
     write_markdown_report,
 )
+from evaluation.review_benchmark import run_review_benchmark
 from evaluation.row_accounting import run_row_accounting_audit
 from evaluation.schema_mapping_benchmark import run_schema_mapping_benchmark
 from evaluation.source_b_mapping_benchmark import run_source_b_mapping_benchmark
@@ -247,6 +250,34 @@ def _survivorship_benchmark_to_dict(result) -> dict[str, Any]:
         "conflict_preserved": result.conflict_preserved,
         "conflict_preservation_rate": result.conflict_preservation_rate,
         "failures_by_kind": result.failures_by_kind,
+        "passed": result.passed,
+    }
+
+
+def _review_benchmark_to_dict(result) -> dict[str, Any]:
+    return {
+        "split_name": result.split_name,
+        "review_case_count": result.review_case_count,
+        "pending_case_count": result.pending_case_count,
+        "deferred_case_count": result.deferred_case_count,
+        "unique_records_in_review": result.unique_records_in_review,
+        "review_cases_per_1000_records": result.review_cases_per_1000_records,
+        "records_in_multiple_review_cases": result.records_in_multiple_review_cases,
+        "max_review_cases_for_single_record": result.max_review_cases_for_single_record,
+        "largest_review_case_component": result.largest_review_case_component,
+        "labeled_review_pairs": result.labeled_review_pairs,
+        "oracle_match_decisions": result.oracle_match_decisions,
+        "oracle_no_match_decisions": result.oracle_no_match_decisions,
+        "oracle_defer_decisions": result.oracle_defer_decisions,
+        "oracle_simulated_resolution_application_accuracy": (
+            result.oracle_simulated_resolution_application_accuracy
+        ),
+        "oracle_simulated_match_application_safety_rate": (
+            result.oracle_simulated_match_application_safety_rate
+        ),
+        "duplicate_membership_violations": result.duplicate_membership_violations,
+        "unresolved_unsafe_merge_violations": result.unresolved_unsafe_merge_violations,
+        "contradiction_count": result.contradiction_count,
         "passed": result.passed,
     }
 
@@ -472,6 +503,51 @@ def run_evaluation(
                 print(f"survivorship_benchmark: ERROR ({survivorship_benchmark.error_message})")
                 print()
 
+        review_benchmark = None
+        review_available = False
+        if dataset_path is not None:
+            review_benchmark = run_review_benchmark(
+                dataset_path=dataset_path,
+                split_name="test",
+            )
+            review_available = review_benchmark.ran_successfully
+            if review_available:
+                print("Real Human Review Benchmark")
+                print("------------------")
+                print(f"split: {review_benchmark.split_name}")
+                print(f"review_case_count: {review_benchmark.review_case_count}")
+                print(f"unique_records_in_review: {review_benchmark.unique_records_in_review}")
+                print(
+                    "review_cases_per_1000_records: "
+                    f"{review_benchmark.review_cases_per_1000_records:.2f}"
+                )
+                print(f"labeled_review_pairs: {review_benchmark.labeled_review_pairs}")
+                print(
+                    "oracle_simulated_resolution_application_accuracy: "
+                    f"{review_benchmark.oracle_simulated_resolution_application_accuracy:.4f} "
+                    "(oracle-simulated decisions applied correctly; NOT real human accuracy)"
+                )
+                print(
+                    "oracle_simulated_match_application_safety_rate: "
+                    f"{review_benchmark.oracle_simulated_match_application_safety_rate:.4f} "
+                    "(workflow safety under oracle MATCH; NOT real human accuracy)"
+                )
+                print(
+                    "duplicate_membership_violations: "
+                    f"{review_benchmark.duplicate_membership_violations}"
+                )
+                print(
+                    "unresolved_unsafe_merge_violations: "
+                    f"{review_benchmark.unresolved_unsafe_merge_violations}"
+                )
+                print(f"review_safety_invariants: {'PASS' if review_benchmark.passed else 'FAIL'}")
+                print()
+            elif review_benchmark.error_message:
+                print("Real Human Review Benchmark")
+                print("------------------")
+                print(f"review_benchmark: ERROR ({review_benchmark.error_message})")
+                print()
+
         if dataset_path is not None:
             row_accounting_audit = run_row_accounting_audit(dataset_path)
             print("Row Accounting Audit")
@@ -620,6 +696,41 @@ def run_evaluation(
                 "(distinct member values preserved in conflict metadata)"
             )
 
+        if review_available and review_benchmark is not None:
+            print()
+            print("Real Human Review Benchmark Metrics")
+            print("------------------")
+            print(
+                "review_case_count: "
+                f"{review_benchmark.review_case_count} "
+                "(source: entity_resolution REVIEW queue / test split)"
+            )
+            print(
+                "review_cases_per_1000_records: "
+                f"{review_benchmark.review_cases_per_1000_records:.2f} "
+                "(workload statistic only)"
+            )
+            print(
+                "oracle_simulated_resolution_application_accuracy: "
+                f"{review_benchmark.oracle_simulated_resolution_application_accuracy:.4f} "
+                "(oracle-simulated decisions applied correctly; NOT real human accuracy)"
+            )
+            print(
+                "oracle_simulated_match_application_safety_rate: "
+                f"{review_benchmark.oracle_simulated_match_application_safety_rate:.4f} "
+                "(workflow safety under oracle MATCH; NOT real human accuracy)"
+            )
+            print(
+                "duplicate_membership_violations: "
+                f"{review_benchmark.duplicate_membership_violations} "
+                "(hard safety invariant; must be 0)"
+            )
+            print(
+                "unresolved_unsafe_merge_violations: "
+                f"{review_benchmark.unresolved_unsafe_merge_violations} "
+                "(hard safety invariant; must be 0)"
+            )
+
         print()
         print("Infrastructure Hard Gates (Fixture Smoke)")
         print("------------------")
@@ -685,6 +796,11 @@ def run_evaluation(
                 if survivorship_available and survivorship_benchmark is not None
                 else None
             ),
+            real_review_benchmark=(
+                _review_benchmark_to_dict(review_benchmark)
+                if review_available and review_benchmark is not None
+                else None
+            ),
             schema_mapping_quality=(
                 SCHEMA_MAPPING_QUALITY_AVAILABLE
                 if schema_mapping_available
@@ -699,6 +815,11 @@ def run_evaluation(
                 SURVIVORSHIP_QUALITY_AVAILABLE
                 if survivorship_available
                 else SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE
+            ),
+            human_review_quality=(
+                HUMAN_REVIEW_QUALITY_AVAILABLE
+                if review_available
+                else HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE
             ),
         )
         report_data["infrastructure_gate_status"] = "PASS" if infrastructure_passed else "FAIL"
@@ -757,6 +878,12 @@ def run_evaluation(
             else SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE
         )
         print(f"Survivorship Quality: {survivorship_quality}")
+        human_review_quality = (
+            HUMAN_REVIEW_QUALITY_AVAILABLE
+            if review_available
+            else HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE
+        )
+        print(f"Human Review Quality: {human_review_quality}")
         schema_quality = (
             SCHEMA_MAPPING_QUALITY_AVAILABLE
             if schema_mapping_available

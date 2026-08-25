@@ -31,6 +31,18 @@ class FieldProvenance:
 
 
 @dataclass(frozen=True)
+class HumanReviewProvenance:
+    review_case_id: str
+    record_a_id: str
+    record_b_id: str
+    machine_decision: str
+    human_decision: str
+    reviewer_id: str | None
+    resolution_sequence: int
+    downstream_action: str
+
+
+@dataclass(frozen=True)
 class PreservedFieldConflict:
     field_name: str
     values_by_record: tuple[tuple[str, str | None], ...]
@@ -48,6 +60,7 @@ class CanonicalEntity:
     preserved_conflicts: tuple[PreservedFieldConflict, ...]
     has_unresolved_conflicts: bool
     has_cluster_internal_conflict: bool
+    human_review_provenance: tuple[HumanReviewProvenance, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -80,6 +93,19 @@ class CanonicalEntity:
                     "description": item.description,
                 }
                 for item in self.preserved_conflicts
+            ],
+            "human_review_provenance": [
+                {
+                    "review_case_id": item.review_case_id,
+                    "record_a_id": item.record_a_id,
+                    "record_b_id": item.record_b_id,
+                    "machine_decision": item.machine_decision,
+                    "human_decision": item.human_decision,
+                    "reviewer_id": item.reviewer_id,
+                    "resolution_sequence": item.resolution_sequence,
+                    "downstream_action": item.downstream_action,
+                }
+                for item in self.human_review_provenance
             ],
         }
 
