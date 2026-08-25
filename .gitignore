@@ -72,6 +72,7 @@ normalization/reports/
 schema_mapping/reports/
 entity_resolution/reports/
 survivorship/reports/
+human_review/reports/
 
 # =========================
 # Local dataset artifacts

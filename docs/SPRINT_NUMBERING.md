@@ -7,8 +7,9 @@
 | Sprint 05 | Schema mapping intelligence | Merged |
 | Sprint 06 | Entity resolution | Merged |
 | Sprint 07 | Survivorship & canonical entity construction | Merged |
-| Sprint 7B | Reliability, evaluation, acceptance hardening | In progress |
-| Sprint 08 | Not started | — |
+| Sprint 7B | Reliability, evaluation, acceptance hardening | Merged |
+| Sprint 08 | Human review & ambiguity resolution | In progress |
+| Sprint 09 | LLM integration (reserved) | Not started |
 
 ## Dataset split roles
 

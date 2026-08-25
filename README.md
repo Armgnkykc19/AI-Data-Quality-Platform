@@ -92,7 +92,39 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 7B (Reliability & Acceptance Hardening) on top of merged Sprint 07.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) on top of merged Sprint 7B.
+
+## Sprint 08
+
+Sprint 08 adds a deterministic human-review domain layer for ambiguous entity-resolution decisions. REVIEW is not treated as failure — it is the safe routing path for pairs that must not be auto-merged.
+
+Highlights:
+
+- `human_review/` package with `ReviewCase`, evidence, explanations, workflow, and audit trail,
+- machine vs human decision separation (`AUTO_MATCH`/`REVIEW`/`NO_MATCH` vs `MATCH`/`NO_MATCH`/`DEFER`),
+- stable review case IDs and order-invariant case generation,
+- human-confirmed `MATCH` integration into canonical entity construction via `HR-*` clusters,
+- unresolved `REVIEW` / `DEFER` records remain excluded from unsafe merging,
+- transitive `MATCH`/`NO_MATCH` contradiction detection (fail closed),
+- human review CLI (`scripts/manage_human_review.py`),
+- real review benchmark with safety invariants (`evaluation/review_benchmark.py`).
+
+Manage review cases:
+
+```bash
+python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo
+python scripts/manage_human_review.py list human_review/reports/demo/review_workflow.json
+python scripts/manage_human_review.py inspect human_review/reports/demo/review_workflow.json RC-rec-a--rec-b
+python scripts/manage_human_review.py resolve human_review/reports/demo/review_workflow.json RC-rec-a--rec-b --decision MATCH --reviewer-id reviewer-1 --output-report-dir human_review/reports/demo-resolved
+```
+
+Build canonical entities with human review outcomes (optional parameter on survivorship engine):
+
+```bash
+python scripts/build_canonical_entities.py input.csv
+```
+
+See `docs/development-reports/SPRINT_08_HUMAN_REVIEW_AND_AMBIGUITY_RESOLUTION.md`.
 
 ## Sprint 7B
 

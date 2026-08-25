@@ -12,6 +12,8 @@ ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 ENTITY_RESOLUTION_QUALITY_AVAILABLE = "AVAILABLE"
 SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SURVIVORSHIP_QUALITY_AVAILABLE = "AVAILABLE"
+HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
+HUMAN_REVIEW_QUALITY_AVAILABLE = "AVAILABLE"
 SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE = "NOT_YET_AVAILABLE"
 SCHEMA_MAPPING_QUALITY_AVAILABLE = "AVAILABLE"
 
@@ -31,9 +33,11 @@ def build_report_data(
     real_source_b_mapping_benchmark: dict[str, Any] | None = None,
     real_entity_resolution_benchmark: dict[str, Any] | None = None,
     real_survivorship_benchmark: dict[str, Any] | None = None,
+    real_review_benchmark: dict[str, Any] | None = None,
     schema_mapping_quality: str = SCHEMA_MAPPING_QUALITY_NOT_YET_AVAILABLE,
     entity_resolution_quality: str = ENTITY_RESOLUTION_QUALITY_NOT_YET_AVAILABLE,
     survivorship_quality: str = SURVIVORSHIP_QUALITY_NOT_YET_AVAILABLE,
+    human_review_quality: str = HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE,
 ) -> dict:
     hard_gate_status = "PASS" if overall_passed else "FAIL"
 
@@ -42,6 +46,7 @@ def build_report_data(
         "product_quality_evaluation": product_quality_evaluation,
         "entity_resolution_quality": entity_resolution_quality,
         "survivorship_quality": survivorship_quality,
+        "human_review_quality": human_review_quality,
         "schema_mapping_quality": schema_mapping_quality,
         "hard_gate_status": hard_gate_status,
         "overall_infrastructure_status": hard_gate_status,
@@ -76,6 +81,8 @@ def build_report_data(
         report["real_entity_resolution_benchmark"] = real_entity_resolution_benchmark
     if real_survivorship_benchmark is not None:
         report["real_survivorship_benchmark"] = real_survivorship_benchmark
+    if real_review_benchmark is not None:
+        report["real_review_benchmark"] = real_review_benchmark
 
     return report
 
@@ -98,6 +105,10 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
         f"**Product Quality Evaluation:** {report_data['product_quality_evaluation']}",
         f"**Entity Resolution Quality:** {report_data['entity_resolution_quality']}",
         f"**Survivorship Quality:** {report_data['survivorship_quality']}",
+        (
+            "**Human Review Quality:** "
+            f"{report_data.get('human_review_quality', HUMAN_REVIEW_QUALITY_NOT_YET_AVAILABLE)}"
+        ),
         f"**Schema Mapping Quality:** {report_data['schema_mapping_quality']}",
         f"**Dataset:** {report_data['dataset']['name']}",
         f"**Version:** {report_data['dataset']['version']}",
@@ -242,6 +253,40 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
                     f"| preserved_conflict_count | "
                     f"{real_survivorship.get('preserved_conflict_count', 0)} |"
                 ),
+            ]
+        )
+
+    real_review = report_data.get("real_review_benchmark")
+    if isinstance(real_review, dict):
+        lines.extend(
+            [
+                "",
+                "## Real Human Review Benchmark",
+                "",
+                "| Metric | Value |",
+                "|---|---:|",
+                f"| review_case_count | {real_review.get('review_case_count', 0)} |",
+                (
+                    f"| review_cases_per_1000_records | "
+                    f"{real_review.get('review_cases_per_1000_records', 0.0):.2f} |"
+                ),
+                (
+                    f"| oracle_simulated_resolution_application_accuracy | "
+                    f"{real_review.get('oracle_simulated_resolution_application_accuracy', 0.0):.4f} |"  # noqa: E501
+                ),
+                (
+                    f"| oracle_simulated_match_application_safety_rate | "
+                    f"{real_review.get('oracle_simulated_match_application_safety_rate', 0.0):.4f} |"  # noqa: E501
+                ),
+                (
+                    f"| duplicate_membership_violations | "
+                    f"{real_review.get('duplicate_membership_violations', 0)} |"
+                ),
+                (
+                    f"| unresolved_unsafe_merge_violations | "
+                    f"{real_review.get('unresolved_unsafe_merge_violations', 0)} |"
+                ),
+                f"| safety_invariants_passed | {real_review.get('passed', False)} |",
             ]
         )
 
