@@ -8,7 +8,7 @@ from human_review.errors import InvalidReviewTransitionError
 from human_review.ids import stable_review_case_id
 from human_review.models import HumanReviewDecision, ReviewStatus
 from human_review.workflow import ReviewWorkflow
-from tests.human_review.conftest import make_review_resolution
+from tests.human_review.conftest import make_review_resolution, match_authorization_kwargs
 
 
 def test_review_case_generation_from_review_queue(resolution_config) -> None:
@@ -56,7 +56,12 @@ def test_match_no_match_and_defer_resolutions(resolution_config) -> None:
     workflow = ReviewWorkflow(generate_review_cases(resolution, config=resolution_config))
     case_id = workflow.list_cases()[0].review_case_id
 
-    workflow.resolve_case(case_id, decision=HumanReviewDecision.MATCH, reviewer_id="reviewer-1")
+    workflow.resolve_case(
+        case_id,
+        decision=HumanReviewDecision.MATCH,
+        reviewer_id="reviewer-1",
+        **match_authorization_kwargs(resolution, resolution_config),
+    )
     with pytest.raises(InvalidReviewTransitionError):
         workflow.resolve_case(case_id, decision=HumanReviewDecision.NO_MATCH)
 
@@ -78,7 +83,11 @@ def test_machine_decision_preserved_after_resolution(resolution_config) -> None:
     resolution = make_review_resolution("rec-a", "rec-b")
     workflow = ReviewWorkflow(generate_review_cases(resolution, config=resolution_config))
     case = workflow.list_cases()[0]
-    workflow.resolve_case(case.review_case_id, decision=HumanReviewDecision.MATCH)
+    workflow.resolve_case(
+        case.review_case_id,
+        decision=HumanReviewDecision.MATCH,
+        **match_authorization_kwargs(resolution, resolution_config),
+    )
     resolved = workflow.get_case(case.review_case_id)
     assert resolved.machine_decision.value == "REVIEW"
     assert resolved.resolution is not None

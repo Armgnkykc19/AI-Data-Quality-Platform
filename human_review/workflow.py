@@ -4,8 +4,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from human_review.authorization import assert_human_match_authorization_boundary
-from human_review.constraints import assert_human_match_allowed
 from human_review.errors import (
+    HumanReviewAuthorizationContextError,
     InvalidReviewTransitionError,
     ReviewCaseNotFoundError,
 )
@@ -75,17 +75,33 @@ class ReviewWorkflow:
             )
 
         if decision == HumanReviewDecision.MATCH:
-            outcome = self.to_outcome()
-            if resolution is not None and records_by_id is not None and entity_resolution_config:
-                assert_human_match_authorization_boundary(
-                    pair=case.pair,
-                    outcome=outcome,
-                    resolution=resolution,
-                    records_by_id=records_by_id,
-                    config=entity_resolution_config,
+            missing = []
+            if resolution is None:
+                missing.append("resolution")
+            if not records_by_id:
+                missing.append("records_by_id")
+            if entity_resolution_config is None:
+                missing.append("entity_resolution_config")
+            if missing:
+                raise HumanReviewAuthorizationContextError(
+                    "Human MATCH requires full entity-resolution authorization context "
+                    f"({', '.join(missing)} missing). Fail closed; MATCH not applied."
                 )
-            else:
-                assert_human_match_allowed(pair=case.pair, outcome=outcome)
+            if (
+                case.pair.record_a_id not in records_by_id
+                or case.pair.record_b_id not in records_by_id
+            ):
+                raise HumanReviewAuthorizationContextError(
+                    "Human MATCH requires both reviewed records in records_by_id. "
+                    "Fail closed; MATCH not applied."
+                )
+            assert_human_match_authorization_boundary(
+                pair=case.pair,
+                outcome=self.to_outcome(),
+                resolution=resolution,
+                records_by_id=records_by_id,
+                config=entity_resolution_config,
+            )
         resolution = ReviewResolution(
             review_case_id=case.review_case_id,
             human_decision=decision,

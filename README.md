@@ -92,7 +92,7 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 08 (Human Review & Ambiguity Resolution) on top of merged Sprint 7B.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete on top of merged Sprint 7B. Sprint 09 (LLM) is reserved and has not started.
 
 ## Sprint 08
 
@@ -107,24 +107,28 @@ Highlights:
 - unresolved `REVIEW` / `DEFER` records remain excluded from unsafe merging,
 - transitive `MATCH`/`NO_MATCH` contradiction detection (fail closed),
 - human review CLI (`scripts/manage_human_review.py`),
+- validated `human_review_report.json` (`schema_version` 1.0.0) consumed by the canonical CLI,
+- authorization context persisted in the report and applied on `resolve MATCH`,
+- review safety invariants as product hard gates,
 - real review benchmark with safety invariants (`evaluation/review_benchmark.py`).
 
 Manage review cases:
 
 ```bash
 python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo
-python scripts/manage_human_review.py list human_review/reports/demo/review_workflow.json
-python scripts/manage_human_review.py inspect human_review/reports/demo/review_workflow.json RC-rec-a--rec-b
-python scripts/manage_human_review.py resolve human_review/reports/demo/review_workflow.json RC-rec-a--rec-b --decision MATCH --reviewer-id reviewer-1 --output-report-dir human_review/reports/demo-resolved
+python scripts/manage_human_review.py list human_review/reports/demo/human_review_report.json
+python scripts/manage_human_review.py inspect human_review/reports/demo/human_review_report.json RC-rec-a--rec-b
+python scripts/manage_human_review.py resolve human_review/reports/demo/human_review_report.json RC-rec-a--rec-b --decision MATCH --reviewer-id reviewer-1 --output-report-dir human_review/reports/demo-resolved
 ```
 
-Build canonical entities with human review outcomes (optional parameter on survivorship engine):
+Build canonical entities, optionally applying a validated human-review outcome:
 
 ```bash
 python scripts/build_canonical_entities.py input.csv
+python scripts/build_canonical_entities.py input.csv --human-review-report human_review/reports/demo-resolved/human_review_report.json
 ```
 
-See `docs/development-reports/SPRINT_08_HUMAN_REVIEW_AND_AMBIGUITY_RESOLUTION.md`.
+See `docs/development-reports/SPRINT_08_HUMAN_REVIEW_AND_AMBIGUITY_RESOLUTION.md` and `docs/development-reports/ACCEPTANCE_THRESHOLDS.md`.
 
 ## Sprint 7B
 

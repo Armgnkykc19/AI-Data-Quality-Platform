@@ -277,7 +277,14 @@ def _review_benchmark_to_dict(result) -> dict[str, Any]:
         ),
         "duplicate_membership_violations": result.duplicate_membership_violations,
         "unresolved_unsafe_merge_violations": result.unresolved_unsafe_merge_violations,
+        "no_match_transitive_merge_violations": result.no_match_transitive_merge_violations,
+        "unauthorized_severe_conflict_merges": result.unauthorized_severe_conflict_merges,
+        "human_match_without_provenance_violations": (
+            result.human_match_without_provenance_violations
+        ),
         "contradiction_count": result.contradiction_count,
+        "authorization_blocked_oracle_matches": result.authorization_blocked_oracle_matches,
+        "oracle_applied_labeled_pairs": result.oracle_applied_labeled_pairs,
         "passed": result.passed,
     }
 
@@ -318,6 +325,8 @@ def run_evaluation(
         product_availability = []
         product_gate_status = "SKIPPED"
         product_passed = True
+        product_acceptance = bool(config.get("product_acceptance", True))
+        acceptance_mode = str(config.get("acceptance_mode") or "product")
         row_accounting_audit = None
         threshold_sweep = None
 
@@ -506,14 +515,15 @@ def run_evaluation(
         review_benchmark = None
         review_available = False
         if dataset_path is not None:
+            print("Real Human Review Benchmark")
+            print("------------------")
+            print("running oracle-simulated review (authorization + survivorship)...")
             review_benchmark = run_review_benchmark(
                 dataset_path=dataset_path,
                 split_name="test",
             )
             review_available = review_benchmark.ran_successfully
             if review_available:
-                print("Real Human Review Benchmark")
-                print("------------------")
                 print(f"split: {review_benchmark.split_name}")
                 print(f"review_case_count: {review_benchmark.review_case_count}")
                 print(f"unique_records_in_review: {review_benchmark.unique_records_in_review}")
@@ -523,14 +533,25 @@ def run_evaluation(
                 )
                 print(f"labeled_review_pairs: {review_benchmark.labeled_review_pairs}")
                 print(
+                    "oracle_applied_labeled_pairs: "
+                    f"{review_benchmark.oracle_applied_labeled_pairs} "
+                    "(labeled pairs where production policy allowed the oracle decision)"
+                )
+                print(
+                    "authorization_blocked_oracle_matches: "
+                    f"{review_benchmark.authorization_blocked_oracle_matches} "
+                    "(safety abstention; not an application-accuracy error; not a product gate)"
+                )
+                print(
                     "oracle_simulated_resolution_application_accuracy: "
                     f"{review_benchmark.oracle_simulated_resolution_application_accuracy:.4f} "
-                    "(oracle-simulated decisions applied correctly; NOT real human accuracy)"
+                    "(applied oracle decisions only; blocked MATCH excluded from denominator; "
+                    "NOT real human accuracy)"
                 )
                 print(
                     "oracle_simulated_match_application_safety_rate: "
                     f"{review_benchmark.oracle_simulated_match_application_safety_rate:.4f} "
-                    "(workflow safety under oracle MATCH; NOT real human accuracy)"
+                    "(workflow safety under applied oracle MATCH; NOT real human accuracy)"
                 )
                 print(
                     "duplicate_membership_violations: "
@@ -538,13 +559,27 @@ def run_evaluation(
                 )
                 print(
                     "unresolved_unsafe_merge_violations: "
-                    f"{review_benchmark.unresolved_unsafe_merge_violations}"
+                    f"{review_benchmark.unresolved_unsafe_merge_violations} "
+                    "(hard safety invariant; must be 0)"
+                )
+                print(
+                    "no_match_transitive_merge_violations: "
+                    f"{review_benchmark.no_match_transitive_merge_violations} "
+                    "(hard safety invariant; must be 0)"
+                )
+                print(
+                    "unauthorized_severe_conflict_merges: "
+                    f"{review_benchmark.unauthorized_severe_conflict_merges} "
+                    "(hard safety invariant; must be 0)"
+                )
+                print(
+                    "human_match_without_provenance_violations: "
+                    f"{review_benchmark.human_match_without_provenance_violations} "
+                    "(hard safety invariant; must be 0)"
                 )
                 print(f"review_safety_invariants: {'PASS' if review_benchmark.passed else 'FAIL'}")
                 print()
             elif review_benchmark.error_message:
-                print("Real Human Review Benchmark")
-                print("------------------")
                 print(f"review_benchmark: ERROR ({review_benchmark.error_message})")
                 print()
 
@@ -587,6 +622,7 @@ def run_evaluation(
                     normalization_benchmark=normalization_benchmark,
                     survivorship_benchmark=survivorship_benchmark,
                     row_accounting_audit=row_accounting_audit,
+                    review_benchmark=review_benchmark,
                 )
                 try:
                     product_gate_results, _ = evaluate_product_gates(
@@ -711,14 +747,25 @@ def run_evaluation(
                 "(workload statistic only)"
             )
             print(
+                "oracle_applied_labeled_pairs: "
+                f"{review_benchmark.oracle_applied_labeled_pairs} "
+                "(authorization-accepted oracle decisions only)"
+            )
+            print(
+                "authorization_blocked_oracle_matches: "
+                f"{review_benchmark.authorization_blocked_oracle_matches} "
+                "(safety abstention; not an application-accuracy error; not a product gate)"
+            )
+            print(
                 "oracle_simulated_resolution_application_accuracy: "
                 f"{review_benchmark.oracle_simulated_resolution_application_accuracy:.4f} "
-                "(oracle-simulated decisions applied correctly; NOT real human accuracy)"
+                "(applied oracle decisions only; blocked MATCH excluded from denominator; "
+                "NOT real human accuracy)"
             )
             print(
                 "oracle_simulated_match_application_safety_rate: "
                 f"{review_benchmark.oracle_simulated_match_application_safety_rate:.4f} "
-                "(workflow safety under oracle MATCH; NOT real human accuracy)"
+                "(workflow safety under applied oracle MATCH; NOT real human accuracy)"
             )
             print(
                 "duplicate_membership_violations: "
@@ -728,6 +775,21 @@ def run_evaluation(
             print(
                 "unresolved_unsafe_merge_violations: "
                 f"{review_benchmark.unresolved_unsafe_merge_violations} "
+                "(hard safety invariant; must be 0)"
+            )
+            print(
+                "no_match_transitive_merge_violations: "
+                f"{review_benchmark.no_match_transitive_merge_violations} "
+                "(hard safety invariant; must be 0)"
+            )
+            print(
+                "unauthorized_severe_conflict_merges: "
+                f"{review_benchmark.unauthorized_severe_conflict_merges} "
+                "(hard safety invariant; must be 0)"
+            )
+            print(
+                "human_match_without_provenance_violations: "
+                f"{review_benchmark.human_match_without_provenance_violations} "
                 "(hard safety invariant; must be 0)"
             )
 
@@ -745,7 +807,10 @@ def run_evaluation(
 
         if product_gate_config.get("enabled", False) and product_gate_results:
             print()
-            print("Product Hard Gates (Real Benchmark Metrics)")
+            if product_acceptance:
+                print("Product Hard Gates (Real Benchmark Metrics)")
+            else:
+                print("Infrastructure Smoke Gates (not product acceptance)")
             print("------------------")
             for result in product_gate_results:
                 status = "PASS" if result.passed else "FAIL"
@@ -824,6 +889,8 @@ def run_evaluation(
         )
         report_data["infrastructure_gate_status"] = "PASS" if infrastructure_passed else "FAIL"
         report_data["product_gate_status"] = product_gate_status
+        report_data["product_acceptance"] = product_acceptance
+        report_data["acceptance_mode"] = acceptance_mode
         report_data["product_metrics"] = product_metrics_summary(
             product_metrics,
             product_availability,
@@ -863,8 +930,19 @@ def run_evaluation(
         hard_gate_status = "PASS" if infrastructure_passed else "FAIL"
         print(f"Infrastructure Hard Gates: {hard_gate_status}")
         print(f"Overall Infrastructure Status: {hard_gate_status}")
-        print(f"Product Hard Gates: {product_gate_status}")
-        print(f"Overall Acceptance Status: {'PASS' if overall_passed else 'FAIL'}")
+        print(f"Acceptance mode: {acceptance_mode}")
+        if product_acceptance:
+            print(f"Product Hard Gates: {product_gate_status}")
+            print(f"Overall Acceptance Status: {'PASS' if overall_passed else 'FAIL'}")
+        else:
+            print("Product Hard Gates: NOT CLAIMED (infrastructure smoke config)")
+            print(f"Infrastructure smoke gates: {product_gate_status}")
+            print("Overall Acceptance Status: NOT PRODUCT ACCEPTANCE")
+            print(
+                "ci-smoke / evaluation.ci.yaml is infrastructure smoke only. "
+                "Product candidate-recall >= 0.94 is enforced by configs/evaluation.yaml "
+                "on datasets/golden/v0.1.0."
+            )
         print(f"Product Quality Evaluation: {product_quality}")
         entity_quality = (
             ENTITY_RESOLUTION_QUALITY_AVAILABLE

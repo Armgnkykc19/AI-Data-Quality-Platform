@@ -62,7 +62,7 @@ jobs:
           python scripts/profile_dataset.py datasets/generated/ci-smoke/smoke.xlsx
 
       - name: Run evaluation smoke test
-        run: python -m evaluation.run --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
+        run: python -m evaluation.run --config configs/evaluation.ci.yaml --dataset datasets/generated/ci-smoke/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
 
       - name: Build validation CLI smoke fixtures
         run: |
@@ -231,3 +231,34 @@ jobs:
           print("Survivorship smoke report confirmed.")
           PY
           echo "Survivorship CLI smoke completed."
+
+      - name: Human review CLI smoke
+        run: |
+          python scripts/manage_human_review.py generate datasets/generated/ci-smoke/validation-positive-smoke.csv --report-dir human_review/reports/ci-generate
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected human review generate exit code 0, got $exit_code"
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(
+              Path("human_review/reports/ci-generate/human_review_report.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+          assert report["schema_version"] == "1.0.0"
+          assert report["artifact_type"] == "human_review_outcome"
+          assert report["entity_records"]
+          assert "resolution_snapshot" in report
+          print("Human review generate smoke confirmed.")
+          PY
+          python scripts/build_canonical_entities.py datasets/generated/ci-smoke/validation-positive-smoke.csv --human-review-report human_review/reports/ci-generate/human_review_report.json --report-dir survivorship/reports/ci-review-aware
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected review-aware survivorship exit code 0, got $exit_code"
+            exit 1
+          fi
+          echo "Human review CLI smoke completed."

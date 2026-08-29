@@ -114,6 +114,8 @@ def write_markdown_report(report_data: dict, output_path: Path) -> None:
         f"**Version:** {report_data['dataset']['version']}",
         f"**Hard Gate Status:** {report_data['hard_gate_status']}",
         f"**Overall Infrastructure Status:** {report_data['overall_infrastructure_status']}",
+        f"**Acceptance mode:** {report_data.get('acceptance_mode', 'product')}",
+        f"**Product acceptance:** {report_data.get('product_acceptance', True)}",
         "",
         "## Fixture Smoke Metrics (Infrastructure Only)",
         "",

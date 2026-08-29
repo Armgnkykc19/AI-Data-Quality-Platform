@@ -9,7 +9,11 @@ from human_review.integration import review_excluded_record_ids
 from human_review.models import HumanReviewDecision
 from human_review.workflow import ReviewWorkflow
 from survivorship.engine import build_canonical_entities
-from tests.human_review.conftest import make_chain_review_resolution, make_review_resolution
+from tests.human_review.conftest import (
+    make_chain_review_resolution,
+    make_review_resolution,
+    match_authorization_kwargs,
+)
 
 
 def test_unresolved_review_remains_excluded(resolution_config) -> None:
@@ -26,7 +30,12 @@ def test_human_match_enables_canonical_merge(resolution_config) -> None:
     resolution = make_review_resolution("rec-a", "rec-b")
     workflow = ReviewWorkflow(generate_review_cases(resolution, config=resolution_config))
     case_id = workflow.list_cases()[0].review_case_id
-    workflow.resolve_case(case_id, decision=HumanReviewDecision.MATCH, reviewer_id="reviewer-1")
+    workflow.resolve_case(
+        case_id,
+        decision=HumanReviewDecision.MATCH,
+        reviewer_id="reviewer-1",
+        **match_authorization_kwargs(resolution, resolution_config),
+    )
     outcome = workflow.to_outcome()
 
     excluded = review_excluded_record_ids(resolution, outcome)
@@ -73,7 +82,11 @@ def test_transitive_human_match(resolution_config) -> None:
     resolution = make_chain_review_resolution(("rec-a", "rec-b", "rec-c"))
     workflow = ReviewWorkflow(generate_review_cases(resolution, config=resolution_config))
     for case in workflow.list_cases():
-        workflow.resolve_case(case.review_case_id, decision=HumanReviewDecision.MATCH)
+        workflow.resolve_case(
+            case.review_case_id,
+            decision=HumanReviewDecision.MATCH,
+            **match_authorization_kwargs(resolution, resolution_config),
+        )
 
     result = build_canonical_entities(
         resolution,
@@ -92,7 +105,11 @@ def test_no_match_blocks_transitive_human_match(resolution_config) -> None:
     resolution2 = make_review_resolution("rec-a", "rec-c")
     workflow2 = ReviewWorkflow(generate_review_cases(resolution2, config=resolution_config))
     case_ac = workflow2.list_cases()[0]
-    workflow2.resolve_case(case_ac.review_case_id, decision=HumanReviewDecision.MATCH)
+    workflow2.resolve_case(
+        case_ac.review_case_id,
+        decision=HumanReviewDecision.MATCH,
+        **match_authorization_kwargs(resolution2, resolution_config),
+    )
 
     resolution3 = make_review_resolution("rec-b", "rec-c")
     workflow3 = ReviewWorkflow(generate_review_cases(resolution3, config=resolution_config))
@@ -117,6 +134,7 @@ def test_no_duplicate_canonical_membership(resolution_config) -> None:
     workflow.resolve_case(
         workflow.list_cases()[0].review_case_id,
         decision=HumanReviewDecision.MATCH,
+        **match_authorization_kwargs(resolution, resolution_config),
     )
     result = build_canonical_entities(
         resolution,

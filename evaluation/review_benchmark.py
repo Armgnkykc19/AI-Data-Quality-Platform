@@ -10,8 +10,14 @@ from entity_resolution.models import RecordPair
 from evaluation.ground_truth import EvaluationGroundTruth, load_evaluation_ground_truth
 from evaluation.survivorship_benchmark import _load_entity_records_from_dataset
 from human_review.cases import generate_review_cases
-from human_review.errors import HumanReviewContradictionError
+from human_review.errors import HumanReviewAuthorizationError, HumanReviewContradictionError
 from human_review.models import HumanReviewDecision, ReviewCase
+from human_review.safety import (
+    count_human_match_without_provenance,
+    count_no_match_transitive_merges,
+    count_severe_conflict_merges,
+    count_unresolved_unsafe_merges,
+)
 from human_review.workflow import ReviewWorkflow
 from survivorship.engine import build_canonical_entities
 
@@ -35,8 +41,12 @@ class ReviewBenchmarkResult:
     oracle_simulated_match_application_safety_rate: float = 1.0
     duplicate_membership_violations: int = 0
     unresolved_unsafe_merge_violations: int = 0
+    no_match_transitive_merge_violations: int = 0
+    unauthorized_severe_conflict_merges: int = 0
+    human_match_without_provenance_violations: int = 0
     contradiction_count: int = 0
     authorization_blocked_oracle_matches: int = 0
+    oracle_applied_labeled_pairs: int = 0
     messages: list[str] = field(default_factory=list)
     ran_successfully: bool = True
     error_message: str | None = None
@@ -48,6 +58,9 @@ class ReviewBenchmarkResult:
             and self.oracle_simulated_match_application_safety_rate >= 1.0
             and self.duplicate_membership_violations == 0
             and self.unresolved_unsafe_merge_violations == 0
+            and self.no_match_transitive_merge_violations == 0
+            and self.unauthorized_severe_conflict_merges == 0
+            and self.human_match_without_provenance_violations == 0
             and self.contradiction_count == 0
         )
 
@@ -157,6 +170,7 @@ def run_review_benchmark(
         resolution = resolve_entities(records, source_label=f"review-benchmark-{split_name}")
         workflow_state = generate_review_cases(resolution, config=resolution_config)
         workflow = ReviewWorkflow(workflow_state)
+        records_by_id = {record.record_id: record for record in records}
 
         result.review_case_count = len(workflow_state.cases)
         result.pending_case_count = len(workflow_state.pending_cases())
@@ -193,11 +207,17 @@ def run_review_benchmark(
                     case.review_case_id,
                     decision=oracle_decision,
                     reviewer_id="oracle-simulator",
+                    resolution=resolution,
+                    records_by_id=records_by_id,
+                    entity_resolution_config=resolution_config,
                 )
-            except HumanReviewContradictionError:
-                result.authorization_blocked_oracle_matches += 1
+            except (HumanReviewContradictionError, HumanReviewAuthorizationError):
+                # Production safety abstention. Oracle truth is not production authority.
+                if oracle_decision == HumanReviewDecision.MATCH:
+                    result.authorization_blocked_oracle_matches += 1
                 continue
 
+            result.oracle_applied_labeled_pairs += 1
             if oracle_decision == HumanReviewDecision.MATCH:
                 human_match_total += 1
                 person_a, person_b = _pair_person_truth(case.pair, ground_truth=ground_truth)
@@ -218,18 +238,28 @@ def run_review_benchmark(
         )
         result.duplicate_membership_violations = _membership_violations(survivorship)
         unresolved_ids = outcome.unresolved_record_ids()
-        for entity in survivorship.entities:
-            if len(entity.member_record_ids) < 2:
-                continue
-            if any(record_id in unresolved_ids for record_id in entity.member_record_ids):
-                result.unresolved_unsafe_merge_violations += 1
+        result.unresolved_unsafe_merge_violations = count_unresolved_unsafe_merges(
+            survivorship,
+            unresolved_ids,
+        )
+        result.no_match_transitive_merge_violations = count_no_match_transitive_merges(
+            survivorship,
+            outcome.resolved_no_match_pairs(),
+        )
+        result.unauthorized_severe_conflict_merges = count_severe_conflict_merges(survivorship)
+        result.human_match_without_provenance_violations = count_human_match_without_provenance(
+            survivorship,
+            outcome,
+        )
+        result.contradiction_count = result.no_match_transitive_merge_violations
 
         if human_match_total:
             result.oracle_simulated_match_application_safety_rate = 1.0 - (
                 false_human_match / human_match_total
             )
-        if labeled:
-            result.oracle_simulated_resolution_application_accuracy = correct / labeled
+        applied_labeled = result.oracle_applied_labeled_pairs
+        if applied_labeled:
+            result.oracle_simulated_resolution_application_accuracy = correct / applied_labeled
     except (OSError, ValueError, TypeError, KeyError) as exc:
         result.ran_successfully = False
         result.error_message = str(exc)
