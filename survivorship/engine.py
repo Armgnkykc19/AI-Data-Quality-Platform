@@ -29,7 +29,7 @@ def _human_review_provenance_for_cluster(
     cluster: EntityCluster,
     outcome: HumanReviewOutcome | None,
 ) -> tuple[HumanReviewProvenance, ...]:
-    if outcome is None or not cluster.cluster_id.startswith("HR-"):
+    if outcome is None:
         return ()
 
     provenance_items: list[HumanReviewProvenance] = []

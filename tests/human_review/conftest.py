@@ -26,6 +26,18 @@ def resolution_config() -> EntityResolutionConfig:
     return load_entity_resolution_config()
 
 
+def match_authorization_kwargs(
+    resolution: ResolutionResult,
+    config: EntityResolutionConfig,
+) -> dict:
+    """Deterministic ER context required by production MATCH authorization."""
+    return {
+        "resolution": resolution,
+        "records_by_id": {record.record_id: record for record in resolution.records},
+        "entity_resolution_config": config,
+    }
+
+
 def make_record(record_id: str, **fields: str | None) -> EntityRecord:
     return EntityRecord(
         record_id=record_id,
@@ -114,8 +126,8 @@ def make_review_resolution(
     return ResolutionResult(
         source_label="test",
         records=(
-            make_record(left_id, first_name="Ali", last_name="Yilmaz", email="a@example.com"),
-            make_record(right_id, first_name="Ali", last_name="Yilmaz", email="b@example.com"),
+            make_record(left_id, first_name="Ali", last_name="Yilmaz", email="shared@example.com"),
+            make_record(right_id, first_name="Ali", last_name="Yilmaz", email="shared@example.com"),
         ),
         candidates=(
             MatchCandidate(
@@ -192,9 +204,9 @@ def make_chain_review_resolution(
     decision_ab, review_ab = _review_pair(left_id, mid_id)
     decision_bc, review_bc = _review_pair(mid_id, right_id)
     records = (
-        make_record(left_id, first_name="Ali", last_name="Yilmaz", email="a@example.com"),
-        make_record(mid_id, first_name="Ali", last_name="Yilmaz", email="b@example.com"),
-        make_record(right_id, first_name="Ali", last_name="Yilmaz", email="c@example.com"),
+        make_record(left_id, first_name="Ali", last_name="Yilmaz", email="shared@example.com"),
+        make_record(mid_id, first_name="Ali", last_name="Yilmaz", email="shared@example.com"),
+        make_record(right_id, first_name="Ali", last_name="Yilmaz", email="shared@example.com"),
     )
     summary = ResolutionSummary(
         record_count=3,

@@ -69,7 +69,15 @@ Pass `human_review_outcome` to `build_canonical_entities()` to enable review-awa
 
 ## Contradiction handling
 
-Before accepting a human `MATCH`, the workflow checks whether the pair (or its transitive component) would violate an existing human `NO_MATCH`. Conflicts raise `HumanReviewContradictionError` rather than silently merging.
+Before accepting a human `MATCH`, the workflow requires the full entity-resolution
+authorization context (`resolution`, `records_by_id`, `entity_resolution_config`) and
+then runs `assert_human_match_authorization_boundary`. Missing context raises
+`HumanReviewAuthorizationContextError` and does not mutate workflow state or audit.
+There is no weaker MATCH fallback. The check also covers whether the pair (or its
+transitive component) would violate an existing human `NO_MATCH` or create a severe
+identity conflict. Conflicts raise `HumanReviewContradictionError` or
+`HumanReviewAuthorizationError` rather than silently merging. `NO_MATCH` and `DEFER`
+do not require that ER context.
 
 ## Determinism guarantees
 
@@ -83,7 +91,19 @@ Before accepting a human `MATCH`, the workflow checks whether the pair (or its t
 - Single-resolution workflow only (no reopen/re-appeal in Sprint 08).
 - CLI persistence uses explicit JSON artifacts under `human_review/reports/` (gitignored).
 - Review benchmark uses oracle-simulated decisions for measurement only.
-- Mixed AUTO_MATCH + human MATCH components share `C-*` cluster IDs when both edge types appear in one component.
+- Mixed AUTO_MATCH + human MATCH components share `C-*` cluster IDs when both edge types appear in one component; human MATCH provenance is still attached to the canonical entity.
+
+## Closeout contract
+
+Sprint 08 closeout items:
+
+1. `scripts/build_canonical_entities.py --human-review-report` applies a validated outcome.
+2. Review JSON has `schema_version` `1.0.0`, `artifact_type` `human_review_outcome`, `entity_records`, and `resolution_snapshot`.
+3. Review CLI catches `HumanReviewError` (exit 4) and report errors (exit 3).
+4. `resolve MATCH` restores authorization context from the persisted snapshot (`resolution`, `records_by_id`, entity-resolution config). Missing reconstructed context fail-closes. In-process MATCH has no weaker authorization fallback.
+5. Review safety invariants are product gates (`configs/evaluation.yaml`) with zero-tolerance counts.
+6. Certified Sprint 7B/08 quality bars are unchanged (`docs/development-reports/ACCEPTANCE_THRESHOLDS.md`).
+7. CI smoke uses `configs/evaluation.ci.yaml` and must not claim product acceptance.
 
 ## Evaluation
 
@@ -93,7 +113,14 @@ Run with the standard harness:
 python -m evaluation.run --dataset datasets/golden/v0.1.0 --malformed-fixtures datasets/golden/v0.1.0/malformed
 ```
 
-Review metrics are reported separately. Safety invariants (`duplicate_membership_violations = 0`, `unresolved_unsafe_merge_violations = 0`) are checked in the benchmark; they are **not** added to existing product hard gates until thresholds are justified.
+Review safety metrics are product hard gates when `--dataset` is supplied. Counts must be 0:
+
+- unresolved unsafe merges
+- NO_MATCH transitive merges
+- unauthorized severe-conflict merges
+- human MATCH without provenance
+
+Oracle-simulated review application accuracy is **not** a product gate. Authorization-blocked oracle MATCH decisions are safety abstentions and are excluded from the application-accuracy denominator. See `docs/development-reports/ACCEPTANCE_THRESHOLDS.md`.
 
 ## Sprint 09 reserved
 

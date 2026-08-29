@@ -14,6 +14,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from entity_resolution.config import load_entity_resolution_config  # noqa: E402
 from entity_resolution.engine import resolve_entities  # noqa: E402
 from entity_resolution.records import build_entity_records_from_quality_result  # noqa: E402
+from human_review.errors import HumanReviewError, HumanReviewReportError  # noqa: E402
+from human_review.reporting import load_human_review_report  # noqa: E402
 from ingestion.config import load_ingestion_config  # noqa: E402
 from ingestion.errors import IngestionError  # noqa: E402
 from ingestion.parser import parse_file  # noqa: E402
@@ -50,6 +52,12 @@ def parse_args() -> argparse.Namespace:
         "--survivorship-config",
         type=Path,
         default=PROJECT_ROOT / "configs" / "survivorship.yaml",
+    )
+    parser.add_argument(
+        "--human-review-report",
+        type=Path,
+        default=None,
+        help="Optional validated human-review JSON outcome to apply before survivorship.",
     )
     parser.add_argument("--report-dir", type=Path, default=None)
     parser.add_argument(
@@ -113,7 +121,29 @@ def main() -> int:
             source_label=",".join(str(path) for path in args.input_paths),
             config=resolution_config,
         )
-        result = build_canonical_entities(resolution, config=survivorship_config)
+        human_review_outcome = None
+        if args.human_review_report is not None:
+            loaded = load_human_review_report(args.human_review_report)
+            current_ids = {record.record_id for record in resolution.records}
+            missing = [
+                pair
+                for pair in loaded.outcome.resolved_match_pairs()
+                if pair.record_a_id not in current_ids or pair.record_b_id not in current_ids
+            ]
+            if missing:
+                raise HumanReviewReportError(
+                    "Human MATCH pairs reference records that are not in the current "
+                    "canonical inputs: "
+                    + ", ".join(f"{pair.record_a_id}/{pair.record_b_id}" for pair in missing)
+                )
+            human_review_outcome = loaded.outcome
+
+        result = build_canonical_entities(
+            resolution,
+            config=survivorship_config,
+            entity_resolution_config=resolution_config,
+            human_review_outcome=human_review_outcome,
+        )
 
         if args.inspect_entity is not None:
             entity = next(
@@ -135,6 +165,12 @@ def main() -> int:
     except IngestionError as exc:
         print(f"Ingestion error [{exc.code}]: {exc.message}")
         return 2
+    except HumanReviewReportError as exc:
+        print(f"Review report error: {exc}")
+        return 3
+    except HumanReviewError as exc:
+        print(f"Human review rejected: {exc}")
+        return 4
     except (OSError, ValueError, KeyError) as exc:
         print(f"Survivorship failed: {exc}")
         return 3

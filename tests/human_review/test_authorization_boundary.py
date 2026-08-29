@@ -16,6 +16,7 @@ from tests.human_review.conftest import (
     make_record,
     make_review_resolution,
     make_triangle_review_resolution,
+    match_authorization_kwargs,
 )
 
 
@@ -157,6 +158,7 @@ def test_partial_resolution_keeps_record_excluded_while_other_case_pending(
     workflow.resolve_case(
         cases[RecordPair.ordered("rec-a", "rec-b")].review_case_id,
         decision=HumanReviewDecision.MATCH,
+        **match_authorization_kwargs(resolution, resolution_config),
     )
     outcome = workflow.to_outcome()
     excluded = review_excluded_record_ids(resolution, outcome)
@@ -177,6 +179,7 @@ def test_match_and_defer_prevents_merge(resolution_config) -> None:
     workflow.resolve_case(
         cases[RecordPair.ordered("rec-a", "rec-b")].review_case_id,
         decision=HumanReviewDecision.MATCH,
+        **match_authorization_kwargs(resolution, resolution_config),
     )
     workflow.resolve_case(
         cases[RecordPair.ordered("rec-a", "rec-c")].review_case_id,
@@ -222,6 +225,7 @@ def test_audit_trail_preserves_machine_context(resolution_config) -> None:
         case.review_case_id,
         decision=HumanReviewDecision.MATCH,
         reviewer_id="reviewer-42",
+        **match_authorization_kwargs(resolution, resolution_config),
     )
     resolved = workflow.get_case(case.review_case_id)
     assert resolved.machine_score == pytest.approx(0.84)
@@ -247,4 +251,6 @@ def test_oracle_metric_fields_renamed_in_benchmark_module() -> None:
     result = ReviewBenchmarkResult(split_name="test")
     assert hasattr(result, "oracle_simulated_resolution_application_accuracy")
     assert hasattr(result, "oracle_simulated_match_application_safety_rate")
+    assert hasattr(result, "authorization_blocked_oracle_matches")
+    assert hasattr(result, "oracle_applied_labeled_pairs")
     assert not hasattr(result, "oracle_resolution_accuracy")

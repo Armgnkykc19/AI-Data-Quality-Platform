@@ -19,6 +19,10 @@ PRODUCT_METRIC_SOURCES = {
     "survivorship_field_match_rate": "real_survivorship_benchmark",
     "survivorship_conflict_preservation_rate": "real_survivorship_benchmark",
     "silent_row_loss_rate": "row_accounting_audit",
+    "review_unresolved_unsafe_merge_violations": "real_review_benchmark",
+    "review_no_match_transitive_merge_violations": "real_review_benchmark",
+    "review_unauthorized_severe_conflict_merges": "real_review_benchmark",
+    "review_human_match_without_provenance_violations": "real_review_benchmark",
 }
 
 
@@ -85,6 +89,30 @@ def _metric_from_row_accounting(result) -> dict[str, float | None]:
     return {"silent_row_loss_rate": float(result.silent_row_loss_rate)}
 
 
+def _metric_from_review(result) -> dict[str, float | None]:
+    if result is None or not getattr(result, "ran_successfully", False):
+        return {
+            "review_unresolved_unsafe_merge_violations": None,
+            "review_no_match_transitive_merge_violations": None,
+            "review_unauthorized_severe_conflict_merges": None,
+            "review_human_match_without_provenance_violations": None,
+        }
+    return {
+        "review_unresolved_unsafe_merge_violations": float(
+            result.unresolved_unsafe_merge_violations
+        ),
+        "review_no_match_transitive_merge_violations": float(
+            result.no_match_transitive_merge_violations
+        ),
+        "review_unauthorized_severe_conflict_merges": float(
+            result.unauthorized_severe_conflict_merges
+        ),
+        "review_human_match_without_provenance_violations": float(
+            result.human_match_without_provenance_violations
+        ),
+    }
+
+
 def collect_product_metrics(
     *,
     entity_resolution_benchmark=None,
@@ -93,6 +121,7 @@ def collect_product_metrics(
     normalization_benchmark=None,
     survivorship_benchmark=None,
     row_accounting_audit=None,
+    review_benchmark=None,
 ) -> tuple[dict[str, float], list[ProductMetricAvailability]]:
     raw: dict[str, float | None] = {}
     raw.update(_metric_from_entity_resolution(entity_resolution_benchmark))
@@ -101,6 +130,7 @@ def collect_product_metrics(
     raw.update(_metric_from_normalization(normalization_benchmark))
     raw.update(_metric_from_survivorship(survivorship_benchmark))
     raw.update(_metric_from_row_accounting(row_accounting_audit))
+    raw.update(_metric_from_review(review_benchmark))
 
     availability: list[ProductMetricAvailability] = []
     metrics: dict[str, float] = {}

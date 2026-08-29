@@ -19,3 +19,11 @@ class HumanReviewContradictionError(HumanReviewError):
 
 class HumanReviewAuthorizationError(HumanReviewError):
     """Raised when a human MATCH would merge an unauthorized severe identity conflict."""
+
+
+class HumanReviewAuthorizationContextError(HumanReviewError):
+    """Raised when a human MATCH is requested without full authorization context."""
+
+
+class HumanReviewReportError(HumanReviewError):
+    """Raised when a persisted review report is missing, malformed, or unsupported."""

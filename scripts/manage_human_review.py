@@ -14,8 +14,12 @@ from entity_resolution.config import load_entity_resolution_config  # noqa: E402
 from entity_resolution.engine import resolve_entities  # noqa: E402
 from entity_resolution.records import build_entity_records_from_quality_result  # noqa: E402
 from human_review.cases import generate_review_cases  # noqa: E402
+from human_review.errors import HumanReviewError, HumanReviewReportError  # noqa: E402
 from human_review.models import HumanReviewDecision  # noqa: E402
-from human_review.reporting import write_review_reports  # noqa: E402
+from human_review.reporting import (  # noqa: E402
+    load_human_review_report,
+    write_review_reports,
+)
 from human_review.workflow import ReviewWorkflow  # noqa: E402
 from ingestion.config import load_ingestion_config  # noqa: E402
 from ingestion.errors import IngestionError  # noqa: E402
@@ -25,7 +29,11 @@ from record_quality.pipeline import run_quality_pipeline  # noqa: E402
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate and resolve deterministic human review cases for entity resolution."
+        description="Generate and resolve deterministic human review cases for entity resolution.",
+        epilog=(
+            "Exit codes: 0 success, 1 usage, 2 ingestion, "
+            "3 report/IO error, 4 human-review policy rejection."
+        ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -66,68 +74,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_report(report_path: Path) -> ReviewWorkflow:
-    payload = json.loads(report_path.read_text(encoding="utf-8"))
-    from human_review.models import ReviewAuditEntry, ReviewCase, ReviewWorkflowState
-
-    cases = []
-    for item in payload["workflow_state"]["cases"]:
-        from entity_resolution.models import MatchDecisionType, RecordPair
-        from human_review.models import (
-            ReviewBlockingReason,
-            ReviewConflictEvidence,
-            ReviewEvidence,
-            ReviewResolution,
-            ReviewStatus,
-        )
-
-        resolution = None
-        if item.get("resolution") is not None:
-            resolution_payload = item["resolution"]
-            resolution = ReviewResolution(
-                review_case_id=item["review_case_id"],
-                human_decision=HumanReviewDecision(resolution_payload["human_decision"]),
-                reviewer_id=resolution_payload.get("reviewer_id"),
-                resolution_sequence=resolution_payload["resolution_sequence"],
-                machine_decision=MatchDecisionType(resolution_payload["machine_decision"]),
-                machine_reason=resolution_payload["machine_reason"],
-                downstream_action=resolution_payload["downstream_action"],
-            )
-        cases.append(
-            ReviewCase(
-                review_case_id=item["review_case_id"],
-                pair=RecordPair.ordered(item["record_a_id"], item["record_b_id"]),
-                record_ids=(item["record_a_id"], item["record_b_id"]),
-                machine_decision=MatchDecisionType(item["machine_decision"]),
-                machine_score=item["machine_score"],
-                auto_match_threshold=item["auto_match_threshold"],
-                review_threshold=item["review_threshold"],
-                machine_reason=item["machine_reason"],
-                blocking_reasons=tuple(
-                    ReviewBlockingReason(**reason) for reason in item["blocking_reasons"]
-                ),
-                supporting_evidence=tuple(
-                    ReviewEvidence(**evidence) for evidence in item["supporting_evidence"]
-                ),
-                conflicting_evidence=tuple(
-                    ReviewConflictEvidence(**conflict) for conflict in item["conflicting_evidence"]
-                ),
-                missing_evidence_notes=tuple(item["missing_evidence_notes"]),
-                machine_readable_reasons=tuple(item["machine_readable_reasons"]),
-                human_summary=item["human_summary"],
-                status=ReviewStatus(item["status"]),
-                resolution=resolution,
-            )
-        )
-    audit_trail = tuple(
-        ReviewAuditEntry(**entry) for entry in payload["workflow_state"]["audit_trail"]
-    )
-    state = ReviewWorkflowState(
-        cases=tuple(cases),
-        audit_trail=audit_trail,
-        next_resolution_sequence=payload["workflow_state"]["next_resolution_sequence"],
-    )
-    return ReviewWorkflow(state)
+def _load_records(input_path: Path, ingestion_config):
+    parsed = parse_file(input_path, config=ingestion_config)
+    quality = run_quality_pipeline(parsed)
+    return build_entity_records_from_quality_result(parsed, quality)
 
 
 def main() -> int:
@@ -136,22 +86,28 @@ def main() -> int:
         if args.command == "generate":
             ingestion_config = load_ingestion_config(args.ingestion_config)
             resolution_config = load_entity_resolution_config(args.entity_resolution_config)
-            parsed = parse_file(args.input_path, config=ingestion_config)
-            quality = run_quality_pipeline(parsed)
-            records = build_entity_records_from_quality_result(parsed, quality)
+            records = _load_records(args.input_path, ingestion_config)
             resolution = resolve_entities(records, config=resolution_config)
             workflow = ReviewWorkflow(generate_review_cases(resolution, config=resolution_config))
             outcome = workflow.to_outcome()
-            report_path = write_review_reports(outcome, output_directory=args.report_dir)
+            report_path = write_review_reports(
+                outcome,
+                output_directory=args.report_dir,
+                entity_records=records,
+                resolution=resolution,
+                entity_resolution_config_path=args.entity_resolution_config,
+            )
             print(f"Generated {len(outcome.cases)} review cases.")
             print(f"Report: {report_path}")
             return 0
 
-        workflow = _load_report(args.report_path)
+        loaded = load_human_review_report(args.report_path)
+        workflow = ReviewWorkflow(loaded.outcome.workflow_state)
         if args.command == "list":
             for case in workflow.list_cases():
                 print(
-                    f"{case.review_case_id}\t{case.status.value}\t{case.pair.record_a_id}\t{case.pair.record_b_id}"
+                    f"{case.review_case_id}\t{case.status.value}\t"
+                    f"{case.pair.record_a_id}\t{case.pair.record_b_id}"
                 )
             return 0
 
@@ -161,14 +117,42 @@ def main() -> int:
             return 0
 
         if args.command == "resolve":
+            config_path = (
+                Path(loaded.entity_resolution_config_path)
+                if loaded.entity_resolution_config_path
+                else args.entity_resolution_config
+            )
+            resolution_config = load_entity_resolution_config(config_path)
+            decision = HumanReviewDecision(args.decision)
+            records_by_id = {record.record_id: record for record in loaded.entity_records}
+            if not records_by_id:
+                raise HumanReviewReportError(
+                    "Persisted review report is missing entity records required for authorization."
+                )
+            if decision == HumanReviewDecision.MATCH:
+                case = workflow.get_case(args.review_case_id)
+                if (
+                    case.pair.record_a_id not in records_by_id
+                    or case.pair.record_b_id not in records_by_id
+                ):
+                    raise HumanReviewReportError(
+                        "Persisted review report cannot reconstruct MATCH authorization "
+                        "context for the reviewed records."
+                    )
             workflow.resolve_case(
                 args.review_case_id,
-                decision=HumanReviewDecision(args.decision),
+                decision=decision,
                 reviewer_id=args.reviewer_id,
+                resolution=loaded.resolution,
+                records_by_id=records_by_id,
+                entity_resolution_config=resolution_config,
             )
             report_path = write_review_reports(
                 workflow.to_outcome(),
                 output_directory=args.output_report_dir,
+                entity_records=loaded.entity_records,
+                resolution=loaded.resolution,
+                entity_resolution_config_path=config_path,
             )
             print(f"Resolved {args.review_case_id} as {args.decision}.")
             print(f"Report: {report_path}")
@@ -178,6 +162,12 @@ def main() -> int:
     except IngestionError as exc:
         print(f"Ingestion error [{exc.code}]: {exc.message}")
         return 2
+    except HumanReviewReportError as exc:
+        print(f"Review report error: {exc}")
+        return 3
+    except HumanReviewError as exc:
+        print(f"Human review rejected: {exc}")
+        return 4
     except (OSError, ValueError, KeyError) as exc:
         print(f"Human review command failed: {exc}")
         return 3
