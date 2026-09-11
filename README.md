@@ -92,7 +92,7 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete on top of merged Sprint 7B. Sprint 09 (LLM) is reserved and has not started.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete. Sprint 09 adds optional advisory semantic review. The LLM is never an authority.
 
 ## Sprint 08
 
@@ -129,6 +129,26 @@ python scripts/build_canonical_entities.py input.csv --human-review-report human
 ```
 
 See `docs/development-reports/SPRINT_08_HUMAN_REVIEW_AND_AMBIGUITY_RESOLUTION.md` and `docs/development-reports/ACCEPTANCE_THRESHOLDS.md`.
+
+## Sprint 09
+
+Sprint 09 adds controlled, **advisory** LLM semantic review for unresolved `REVIEW` cases. Human Review remains the only writer of `MATCH` / `NO_MATCH` / `DEFER`.
+
+- Disabled by default (`configs/semantic_review.yaml`)
+- Default demo model: GPT-5.6 Luna via OpenAI Responses API
+- Provider/model configurable; Sprint 09 implements one real adapter (`OpenAIProvider`)
+- Fake/scripted providers for tests and CI — these do **not** claim Luna quality
+- Live calls require explicit `--live`, `enabled: true`, `OPENAI_API_KEY`, and a demo budget
+- Semantic benchmark is validation-split only and is not a product hard gate
+
+```bash
+python scripts/suggest_human_review.py suggest --report PATH --case-id RC-... --fake
+python scripts/suggest_human_review.py inspect --suggestion-id LS-...
+python scripts/suggest_human_review.py benchmark --scripted
+python scripts/suggest_human_review.py benchmark --dataset datasets/golden/v0.1.0 --split validation --fake
+```
+
+See `docs/development-reports/SPRINT_09_CONTROLLED_LLM_SEMANTIC_INTELLIGENCE.md`.
 
 ## Sprint 7B
 

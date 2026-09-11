@@ -13,6 +13,19 @@ from validation.engine import ValidationEngine
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.fixture(autouse=True)
+def _forbid_live_openai_sdk(monkeypatch) -> None:
+    """Default pytest must never construct a live OpenAI client."""
+
+    def _blocked(*_args, **_kwargs):
+        raise AssertionError("Live OpenAI SDK construction is forbidden during pytest.")
+
+    monkeypatch.setattr(
+        "semantic_review.providers.openai_provider.create_openai_sdk_client",
+        _blocked,
+    )
+
+
 @pytest.fixture
 def validation_config():
     return load_validation_config()

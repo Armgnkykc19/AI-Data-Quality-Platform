@@ -9,9 +9,9 @@
 | Sprint 07 | Survivorship & canonical entity construction | Merged |
 | Sprint 7B | Reliability, evaluation, acceptance hardening | Merged |
 | Sprint 08 | Human review & ambiguity resolution | Complete |
-| Sprint 09 | LLM integration (reserved) | Not started |
+| Sprint 09 | Controlled LLM semantic review | In progress |
 
-Sprint 08 is human review production closeout. Sprint 09 (LLM) has not started.
+Sprint 08 is human review production closeout. Sprint 09 adds advisory LLM suggestions only.
 
 ## Dataset split roles
 

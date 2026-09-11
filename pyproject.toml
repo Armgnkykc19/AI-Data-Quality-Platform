@@ -4,6 +4,13 @@ version = "0.1.0"
 description = "AI-assisted data quality and transformation platform."
 requires-python = ">=3.11,<3.12"
 
+[project.optional-dependencies]
+# openai 1.66.0 added client.responses.create (Responses API), structured
+# text outputs, reasoning, and usage token fields.
+llm-openai = [
+    "openai>=1.66.0,<3.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
