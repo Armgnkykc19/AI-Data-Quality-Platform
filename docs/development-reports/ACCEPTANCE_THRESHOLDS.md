@@ -45,3 +45,5 @@ python -m evaluation.run --dataset datasets/golden/v0.1.0 --malformed-fixtures d
 ```
 
 Do not tune production behavior from `final_holdout`. Do not lower a gate to obtain a green exit code.
+
+Sprint 09 semantic-review metrics are observational and validation-split only. They are not product hard gates and must not change the certified bars above.

@@ -262,3 +262,23 @@ jobs:
             exit 1
           fi
           echo "Human review CLI smoke completed."
+
+      - name: Run offline semantic review fake benchmark
+        run: |
+          python scripts/suggest_human_review.py benchmark --dataset datasets/generated/ci-smoke/v0.1.0 --split validation --fake --max-cases 10
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected offline semantic review benchmark exit code 0, got $exit_code"
+            exit 1
+          fi
+          echo "Offline fake-provider semantic review smoke completed."
+
+      - name: Run offline semantic review scripted benchmark
+        run: |
+          python scripts/suggest_human_review.py benchmark --scripted
+          exit_code=$?
+          if [ "$exit_code" -ne 0 ]; then
+            echo "Expected scripted semantic review benchmark exit code 0, got $exit_code"
+            exit 1
+          fi
+          echo "Offline scripted semantic review benchmark completed."

@@ -1,0 +1,21 @@
+# Official GPT-5.6 Luna short-context text-token prices.
+# Source: https://developers.openai.com/api/docs/models/gpt-5.6-luna
+# Verified 2026-08-28. Update this file when OpenAI publishes a new card.
+#
+# Additional official cases that Sprint 09 does NOT model:
+# - cache-write pricing (1.25x uncached input)
+# - long-context surcharge for prompts >272K input tokens
+# Sprint 09 requests are bounded far below 272K tokens.
+provider: openai
+model: gpt-5.6-luna
+currency: USD
+unit: per_million_tokens
+pricing_type: standard
+source_url: https://developers.openai.com/api/docs/models/gpt-5.6-luna
+verified_date: "2026-08-28"
+version: "2026-08-28"
+models:
+  gpt-5.6-luna:
+    input_usd_per_million: 0.20
+    cached_input_usd_per_million: 0.02
+    output_usd_per_million: 1.20

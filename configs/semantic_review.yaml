@@ -1,0 +1,16 @@
+enabled: false
+provider: openai
+model: gpt-5.6-luna
+reasoning_effort: low
+timeout_seconds: 15
+max_retries: 1
+max_input_tokens: 10000
+max_output_tokens: 600
+prompt_version: sprint09-v1
+request_schema_version: "1.0"
+response_schema_version: "1.0"
+max_field_chars: 120
+report_output_directory: semantic_review/reports
+live:
+  max_calls: 25
+  max_usd: 1.0
