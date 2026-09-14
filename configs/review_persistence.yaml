@@ -1,0 +1,12 @@
+# Sprint 10 review queue persistence. Runtime database only; no evaluation,
+# ground-truth, or threshold-tuning material belongs here.
+database_path: storage/review_queue.db
+
+# Milliseconds SQLite waits for a held write lock before raising "database is
+# locked" instead of failing immediately.
+busy_timeout_ms: 5000
+
+# WAL lets the queue be read while a review is being written. DELETE is the
+# SQLite default and MEMORY exists for in-memory test databases, where WAL is
+# not available.
+journal_mode: WAL
