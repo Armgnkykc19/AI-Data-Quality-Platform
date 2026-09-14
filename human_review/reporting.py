@@ -72,10 +72,22 @@ def resolution_snapshot(resolution: ResolutionResult) -> dict[str, Any]:
     }
 
 
-def _rebuild_resolution(
+def rebuild_resolution_from_snapshot(
     records: tuple[EntityRecord, ...],
     snapshot: dict[str, Any],
 ) -> ResolutionResult:
+    """Rebuild the AUTO_MATCH graph from the reduced snapshot.
+
+    The inverse of :func:`resolution_snapshot`, and the supported seam for any
+    caller that has persisted a snapshot and needs the ResolutionResult that
+    MATCH authorization reads. ``load_human_review_report`` uses it below, so
+    there is exactly one reconstruction and a stored queue and a stored report
+    can never disagree about which AUTO_MATCH edges exist.
+
+    Pure: no I/O, no report envelope. Only AUTO_MATCH decisions are rebuilt,
+    because only those are persisted -- the comparison scores and candidate
+    reasons behind them are not, and authorization does not read them.
+    """
     decisions: list[MatchDecision] = []
     auto_match_pairs = snapshot.get("auto_match_pairs")
     if not isinstance(auto_match_pairs, list):
@@ -287,7 +299,7 @@ def load_human_review_report(report_path: Path) -> LoadedHumanReviewReport:
     return LoadedHumanReviewReport(
         outcome=outcome,
         entity_records=record_tuple,
-        resolution=_rebuild_resolution(record_tuple, snapshot),
+        resolution=rebuild_resolution_from_snapshot(record_tuple, snapshot),
         entity_resolution_config_path=(
             str(payload["entity_resolution_config_path"])
             if payload.get("entity_resolution_config_path")
