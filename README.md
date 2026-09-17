@@ -94,6 +94,48 @@ ruff check .
 
 Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete. Sprint 09 adds optional advisory semantic review. The LLM is never an authority.
 
+## Sprint 11
+
+Sprint 11 puts a read/resolve REST API in front of the Sprint 10 persistent review queue, and gives the queue one official way to be populated and one official way to be served.
+
+**Not internet-ready.** There is no authentication, no verified reviewer identity, no organizations or tenant isolation, no rate limiting, no TLS termination, and no CORS policy. `reviewer_id` is whatever the client sends, responses carry customer-derived review evidence, and `POST .../resolve` is an authoritative human-review write. The API is bound to localhost and is a local reviewer tool until Sprint 13 adds an identity and authorization boundary. "Production path" here means the real durable application path rather than fixtures or golden evaluation — it does not mean deployable.
+
+### 1. Register a review queue
+
+Trusted workflow registration is an operator action, never an HTTP request: the context it writes is what Sprint 08 MATCH authorization is later evaluated against. There is no `POST /register`, no bootstrap endpoint, and no way to upload a workflow.
+
+```bash
+python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo --register-review-queue
+```
+
+`--register-review-queue` is opt-in; without it `generate` writes the report and nothing durable. `--review-db PATH` overrides the target database for that run. The queue lives at `storage/review_queue.db`, configured in `configs/review_persistence.yaml`.
+
+Re-running the command with the same input is an idempotent no-op: no case is duplicated, no history event is appended, and a case a reviewer has already resolved keeps its status, version and resolution. A changed record set, a changed AUTO_MATCH snapshot, or a different entity-resolution config path is refused with exit code 5, leaving the stored queue exactly as it was.
+
+### 2. Serve the reviewer API
+
+```bash
+python -m review_api
+```
+
+Needs `fastapi`, `pydantic` and `uvicorn`, declared together as the `api` extra in `pyproject.toml`. This repository is run from a source checkout rather than installed as a distribution, so install them with `pip install -r requirements-dev.txt` and run the command from the repository root.
+
+Defaults to `http://127.0.0.1:8000` with one worker and no reloader; `--host` accepts loopback addresses only (`127.0.0.1`, `localhost`, `::1`) and `--port` sets the port. Register a queue first — the runner refuses to start against a database that does not exist rather than creating an empty one that would look like a fully reviewed queue.
+
+That check is file existence and nothing more. A database that exists but has never had a workflow registered still starts and serves an empty queue; it refuses every decision with `503 REVIEW_QUEUE_NOT_READY` rather than authorizing against a context that was never stored. Distinguishing the two at startup is not possible through the Sprint 10 repository contract, so bootstrap-before-use is a documented step rather than an enforced one.
+
+Liveness is `GET /health`, which returns `{"status": "ok"}` and reports nothing about storage. The reviewer endpoints are under `/api/v1/review-cases`, and the generated OpenAPI schema is served at `/openapi.json`:
+
+```
+GET  /api/v1/review-cases
+GET  /api/v1/review-cases/{review_case_id}
+GET  /api/v1/review-cases/{review_case_id}/events
+GET  /api/v1/review-cases/{review_case_id}/semantic-suggestions
+POST /api/v1/review-cases/{review_case_id}/resolve
+```
+
+`POST .../resolve` is a thin adapter over `ReviewQueueService.resolve_case`: it accepts `MATCH` / `NO_MATCH` / `DEFER` with an `expected_version`, and Sprint 08 remains the only authority on whether the decision is allowed. Semantic suggestions are read-only — Sprint 09 generation is not reachable over HTTP.
+
 ## Sprint 08
 
 Sprint 08 adds a deterministic human-review domain layer for ambiguous entity-resolution decisions. REVIEW is not treated as failure — it is the safe routing path for pairs that must not be auto-merged.

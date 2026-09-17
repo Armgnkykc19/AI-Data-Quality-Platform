@@ -5,10 +5,15 @@ Orchestrates persistence around the unchanged Sprint 08 Human Review domain.
 nothing here reimplements MATCH authorization.
 
 ``ReviewQueueService`` is the supported entry point for resolving a persisted
-case. It is exported from the package root, while the repository Protocol it
-depends on is implemented in ``review_persistence``.
+case, and ``register_review_queue`` is the supported entry point for bringing
+one into existence. Both are exported from the package root, while the
+repository Protocol they depend on is implemented in ``review_persistence``.
 """
 
+from review_application.bootstrap import (
+    ReviewQueueRegistration,
+    register_review_queue,
+)
 from review_application.errors import (
     DuplicateCaseRegistrationError,
     PersistedCaseIntegrityError,
@@ -50,6 +55,7 @@ __all__ = [
     "ReviewEventIntegrityError",
     "ReviewEventType",
     "ReviewPersistenceError",
+    "ReviewQueueRegistration",
     "ReviewQueueService",
     "ReviewResolutionResult",
     "ReviewSchemaVersionError",
@@ -58,4 +64,5 @@ __all__ = [
     "WorkflowBundle",
     "audit_entry_from_payload",
     "reconstruct_history",
+    "register_review_queue",
 ]
