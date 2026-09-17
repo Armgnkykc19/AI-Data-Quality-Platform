@@ -252,12 +252,34 @@ def test_an_unwired_app_reports_no_storage() -> None:
     assert app.state.service is None
 
 
+def published_paths() -> dict[str, dict]:
+    """The published operation map, read from the generated OpenAPI document.
+
+    Deliberately not ``app.routes``. That list is Starlette's internal
+    composition of the application, and its shape is not a contract: from
+    Starlette 1.0 an included router appears there as a router object carrying
+    no ``path`` at all, so a walk over it silently stops finding the endpoints
+    it was written to check.
+
+    Silently is the dangerous part. Two of the assertions below state that
+    something is *absent*, and against an empty list they pass for entirely the
+    wrong reason. Reading the OpenAPI document instead keeps them honest: it is
+    what FastAPI publishes, what a client generates from, and a public API of
+    the framework rather than an implementation detail of its router.
+
+    ``app.openapi()`` is used rather than a request to ``/openapi.json`` because
+    it needs no client and runs no lifespan -- building the schema must not be
+    able to open the configured review database.
+    """
+    return create_app().openapi()["paths"]
+
+
 def business_routes() -> list[tuple[str, set[str]]]:
     """Every published path under /api, with the methods it answers."""
     return sorted(
-        (route.path, set(route.methods))
-        for route in create_app().routes
-        if getattr(route, "path", "").startswith("/api")
+        (path, {method.upper() for method in operations})
+        for path, operations in published_paths().items()
+        if path.startswith("/api")
     )
 
 
@@ -273,9 +295,7 @@ def test_the_published_surface_is_exactly_four_reads_and_one_write() -> None:
 
 
 def test_health_is_still_published() -> None:
-    paths = {route.path for route in create_app().routes if hasattr(route, "path")}
-
-    assert "/health" in paths
+    assert "/health" in published_paths()
 
 
 def test_resolution_is_the_only_write_endpoint() -> None:

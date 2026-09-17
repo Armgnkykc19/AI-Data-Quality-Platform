@@ -126,9 +126,17 @@ def test_the_runtime_serves_the_production_application(served: RecordedRun) -> N
 
 
 def test_the_served_application_publishes_the_sprint_11_surface(served: RecordedRun) -> None:
+    """Read from the published schema, not from Starlette's internal route list.
+
+    ``app.routes`` holds an included router as an opaque object with no ``path``
+    from Starlette 1.0 onward. ``app.openapi()`` is the framework's public
+    answer to "what does this application publish", and it builds the document
+    without a client and without entering the lifespan -- so this test still
+    never opens a database.
+    """
     runtime.main([])
 
-    paths = {route.path for route in served.app.routes}
+    paths = served.app.openapi()["paths"]
     assert "/health" in paths
     assert "/api/v1/review-cases/{review_case_id}/resolve" in paths
 
