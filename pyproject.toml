@@ -11,6 +11,23 @@ llm-openai = [
     "openai>=1.66.0,<3.0",
 ]
 
+# The Sprint 11 reviewer REST API. Optional for the same reason llm-openai is:
+# every CLI in scripts/ runs without it, and only a deployment that serves HTTP
+# needs it installed. FastAPI stays below 1.0 because it is still pre-1.0 and
+# reserves breaking changes for that release; the 0.115 floor is the series this
+# API is written against. Pydantic v2 is required outright -- the models use
+# ConfigDict and Literal-typed fields, which v1 cannot express.
+# uvicorn is part of this set rather than a suggestion in the README, because
+# ``python -m review_api`` -- the one documented way to start the API -- imports
+# it. A documented command must not depend on an undeclared package. 0.27 is the
+# floor the runner is written against; the <1.0 ceiling matches the pre-1.0
+# policy applied to FastAPI above.
+api = [
+    "fastapi>=0.115,<1.0",
+    "pydantic>=2.9,<3.0",
+    "uvicorn>=0.27,<1.0",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
