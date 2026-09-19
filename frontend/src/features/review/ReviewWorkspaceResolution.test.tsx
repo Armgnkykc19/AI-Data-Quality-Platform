@@ -144,6 +144,31 @@ function requestsTo(url: string): number {
   return http.urls().filter((candidate) => candidate === url).length;
 }
 
+/**
+ * Leave the resolution in flight, and hand back its release.
+ *
+ * A resolve stub that answers immediately cannot test the double-submit
+ * guard: user-event flushes microtasks between the two clicks, so the second
+ * one lands after the confirmation has already been replaced and would find
+ * nothing to press even with the guard removed. Holding the response is what
+ * puts both activations inside the one window the guard exists to cover.
+ */
+function holdResolve(): () => void {
+  let release: () => void = () => undefined;
+  routes.set(
+    resolveUrl(PENDING_CASE_ID),
+    () =>
+      new Promise<Response>((resolvePromise) => {
+        release = () => {
+          resolvePromise(jsonResponse(matchResolveResponse));
+        };
+      }),
+  );
+  return () => {
+    release();
+  };
+}
+
 /** Leave the next detail read unanswered, and hand back its release. */
 function holdDetail(): () => void {
   let release: () => void = () => undefined;
@@ -431,18 +456,24 @@ describe('the confirmation step', () => {
     expect(decisionButton('Defer')).toBeEnabled();
   });
 
-  it('cannot be confirmed twice into two decisions', async () => {
+  it('cannot be confirmed twice into two decisions while the first is in flight', async () => {
     const { user } = await renderPending();
-    serveResolve(jsonResponse(matchResolveResponse));
+    // Held open, so both activations happen inside the window where a second
+    // request would actually be possible.
+    const release = holdResolve();
 
     await user.click(decisionButton('Match'));
     const confirm = screen.getByRole('button', { name: 'Confirm' });
     await user.dblClick(confirm);
 
-    await waitFor(() => {
-      expect(resolveCalls()).toHaveLength(1);
-    });
-    // And still one after everything settles.
+    expect(resolveCalls()).toHaveLength(1);
+    expect(confirm).toBeDisabled();
+
+    // A third attempt while still in flight changes nothing either.
+    await user.click(confirm);
+    expect(resolveCalls()).toHaveLength(1);
+
+    release();
     await waitFor(() => {
       expect(screen.getByText('Decision recorded.')).toBeInTheDocument();
     });

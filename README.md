@@ -141,6 +141,14 @@ The browser requests `/health` and `/api/v1/...` as **relative, same-origin path
 
 Open `http://127.0.0.1:5173`. `http://127.0.0.1:5173/health` should answer `{"status": "ok"}` through the proxy, and the pending queue should list the cases that were registered. The API does not need to be reachable from anywhere else, and should not be made so.
 
+### What a reviewer should know before deciding
+
+**Every decision is terminal.** `MATCH`, `NO_MATCH` and `DEFER` each move the case out of `PENDING` for good under the current workflow, and `DEFER` is no exception — it records the `DEFERRED` status rather than postponing anything. There is no reopen, no undo, no edit, and no second decision, in this interface or in the API behind it. That is why the UI asks for an explicit confirmation before every write.
+
+**A case that changed must be reviewed again.** Each decision is submitted against the exact case version the reviewer was shown. If the case moved in between, the API refuses the decision with a version conflict and records nothing; the UI then re-reads the case and the reviewer has to look at the refreshed state and choose again. Nothing is retried automatically, and the browser never substitutes the newer version into a decision that was made against the old one.
+
+**A refusal is not a failure to reach the server.** The API also refuses a `MATCH` that its Sprint 08 safety rules do not permit, and a decision that contradicts review state already recorded for the same records. In both cases nothing was written, and no alternative decision is chosen on the reviewer's behalf.
+
 ### Frontend checks
 
 ```bash
