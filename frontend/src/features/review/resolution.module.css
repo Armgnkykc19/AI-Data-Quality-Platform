@@ -1,0 +1,247 @@
+/*
+ * The human decision area.
+ *
+ * One rule governs every colour below: nothing here may encode decision
+ * quality. The three decisions share a single button class, a single border,
+ * a single background and a single hover. Making MATCH green and NO MATCH red
+ * would put a recommendation on screen that no backend field supports, and a
+ * reviewer nudged by a colour is a reviewer the API cannot protect.
+ *
+ * The confirmation surface is allowed to look weightier than the rest of the
+ * workspace, because what it warns about -- a durable, unreopenable
+ * resolution -- is equally true of all three decisions. The weight belongs to
+ * the irreversibility, never to the choice.
+ */
+
+.resolution {
+  margin-top: var(--space-6);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.heading {
+  margin: 0 0 var(--space-1);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.intro {
+  margin: 0 0 var(--space-4);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+/* ---- reviewer label ---------------------------------------------------- */
+
+.reviewerField {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  max-width: 28rem;
+  margin-bottom: var(--space-4);
+}
+
+.reviewerLabel {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.reviewerInput {
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.reviewerInput:disabled {
+  background: var(--color-background);
+  color: var(--color-text-muted);
+}
+
+.reviewerNote {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+/* ---- decisions --------------------------------------------------------- */
+
+.decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/*
+ * Identical for all three. Deliberately not parameterised by decision: there
+ * is no modifier class to reach for, so there is nothing to accidentally
+ * apply to one of them.
+ */
+.decision {
+  flex: 0 1 auto;
+  min-width: 8rem;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.decision:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  background: var(--color-selected-surface);
+}
+
+.decision:disabled {
+  color: var(--color-text-muted);
+  cursor: not-allowed;
+}
+
+/* ---- confirmation ------------------------------------------------------ */
+
+.confirmation {
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--color-notice-border);
+  border-radius: var(--radius);
+  background: var(--color-notice-surface);
+  color: var(--color-notice-text);
+}
+
+.confirmationHeading {
+  margin: 0 0 var(--space-3);
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+/*
+ * Two columns where there is room for two, one where there is not.
+ *
+ * The fixed label column is what forces the breakpoint: at 320px it leaves the
+ * value column about 40px wide, and a record id then wraps one character per
+ * line. Stacking each label above its value keeps every published identifier
+ * fully readable, which matters more here than the table shape -- this is the
+ * surface a reviewer checks before recording something irreversible.
+ */
+.summary {
+  display: grid;
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0 0 var(--space-3);
+  font-size: 0.875rem;
+}
+
+@media (max-width: 30rem) {
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .summaryValue {
+    margin-bottom: var(--space-2);
+  }
+}
+
+.summaryLabel {
+  margin: 0;
+  font-weight: 600;
+}
+
+.summaryValue {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.warning {
+  margin: 0 0 var(--space-2);
+  font-size: 0.875rem;
+}
+
+.confirmActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.confirm,
+.cancel {
+  min-height: 2.25rem;
+  white-space: nowrap;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirm {
+  border: 1px solid var(--color-notice-text);
+  background: var(--color-notice-text);
+  color: var(--color-surface);
+}
+
+.cancel {
+  border: 1px solid var(--color-notice-border);
+  background: transparent;
+  color: var(--color-notice-text);
+}
+
+.confirm:disabled,
+.cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ---- notices ----------------------------------------------------------- */
+
+.status {
+  margin: 0 0 var(--space-3);
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+}
+
+.notice {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--color-border);
+  background: var(--color-background);
+}
+
+.noticeSuccess {
+  border-color: var(--color-selected-border);
+  background: var(--color-selected-surface);
+}
+
+.noticeAttention {
+  border-color: var(--color-error-border);
+  background: var(--color-error-surface);
+  color: var(--color-error-text);
+}
+
+.noticeTitle {
+  margin: 0 0 var(--space-1);
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+.noticeBody {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.noticeFollowUp {
+  margin: var(--space-2) 0 0;
+  font-size: 0.8125rem;
+}

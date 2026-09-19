@@ -92,7 +92,80 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete. Sprint 09 adds optional advisory semantic review. The LLM is never an authority.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete, Sprint 09 adds optional advisory semantic review, Sprint 10 persists the review queue, Sprint 11 serves it over a localhost REST API, and Sprint 12 adds the local Reviewer UI. The LLM is never an authority, and human review stays backend-authoritative.
+
+## Sprint 12
+
+Sprint 12 adds the Reviewer UI: a local browser interface over the Sprint 11 review API, in `frontend/`.
+
+It is a client and nothing more. The queue, the evidence, the advisory observations, the history and every decision rule stay behind the API — the browser renders what is published, submits one human decision, and re-reads the result. Human review remains backend-authoritative: Sprint 08 decides whether a `MATCH` is permitted, and the UI has no field, request or code path through which it could evaluate, weaken, or bypass that. Semantic suggestions are displayed as advisory observations and can never become a decision.
+
+**Local only, and not internet-ready.** There is no authentication, no verified reviewer identity, no organizations, and no tenant isolation. The reviewer label is an unverified audit string, not an account, and the interface does not store it. Identity and authorization arrive in Sprint 13; production serving and browser end-to-end testing in Sprint 14.
+
+### Prerequisites
+
+- Python 3.11 and the backend dependencies (see Sprint 11 below).
+- Node.js 22.13 or newer. CI pins the 22 LTS line because it is the oldest major every locked dependency accepts; Node 24 works too.
+
+### 1. Install the frontend
+
+```bash
+cd frontend
+npm ci
+```
+
+`npm ci` rather than `npm install`: it installs exactly the locked tree.
+
+### 2. Register a review queue and start the API
+
+Follow Sprint 11 below — generate with `--register-review-queue`, then:
+
+```bash
+python -m review_api
+```
+
+Serves `http://127.0.0.1:8000`, loopback only.
+
+### 3. Start the reviewer UI
+
+```bash
+cd frontend
+npm run dev
+```
+
+Serves `http://127.0.0.1:5173`, loopback only.
+
+The browser requests `/health` and `/api/v1/...` as **relative, same-origin paths**; the Vite dev server proxies them to the API on port 8000. That is why no CORS configuration exists or is needed: the API never sees a second origin, and it installs no CORS middleware precisely because an unauthenticated API publishing customer-derived evidence has no origin it could safely trust. There is no `VITE_API_URL` and no absolute backend URL in browser source — adding one would make every request cross-origin and reintroduce the problem the proxy avoids. `npm run preview` serves the production build under the same proxy and the same loopback constraint.
+
+### 4. Verify
+
+Open `http://127.0.0.1:5173`. `http://127.0.0.1:5173/health` should answer `{"status": "ok"}` through the proxy, and the pending queue should list the cases that were registered. The API does not need to be reachable from anywhere else, and should not be made so.
+
+### What a reviewer should know before deciding
+
+**Every decision is terminal.** `MATCH`, `NO_MATCH` and `DEFER` each move the case out of `PENDING` for good under the current workflow, and `DEFER` is no exception — it records the `DEFERRED` status rather than postponing anything. There is no reopen, no undo, no edit, and no second decision, in this interface or in the API behind it. That is why the UI asks for an explicit confirmation before every write.
+
+**A case that changed must be reviewed again.** Each decision is submitted against the exact case version the reviewer was shown. If the case moved in between, the API refuses the decision with a version conflict and records nothing; the UI then re-reads the case and the reviewer has to look at the refreshed state and choose again. Nothing is retried automatically, and the browser never substitutes the newer version into a decision that was made against the old one.
+
+**A refusal is not a failure to reach the server.** The API also refuses a `MATCH` that its Sprint 08 safety rules do not permit, and a decision that contradicts review state already recorded for the same records. In both cases nothing was written, and no alternative decision is chosen on the reviewer's behalf.
+
+### Frontend checks
+
+```bash
+cd frontend
+npm run lint
+npm run typecheck
+npm run test -- --run
+npm run build
+```
+
+### Contract drift
+
+`frontend/src/api/openapi.snapshot.json` is the schema FastAPI publishes, committed verbatim. Two tests keep it honest in both directions: `tests/review_api/test_frontend_openapi_snapshot.py` (Python) fails when the backend's schema no longer matches the committed file, and `frontend/src/api/contract.test.ts` (Vitest) fails when the handwritten TypeScript types no longer match it. Regenerate the snapshot only when an API change is intended:
+
+```bash
+python -c "import json; from review_api import create_app; print(json.dumps(create_app().openapi(), indent=2, sort_keys=True))" > frontend/src/api/openapi.snapshot.json
+```
 
 ## Sprint 11
 

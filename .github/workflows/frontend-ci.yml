@@ -1,0 +1,72 @@
+# Node-only, and deliberately so.
+#
+# The reviewer UI is checked here; the API it talks to is checked by
+# Evaluation CI, which already installs the Python dependencies and runs the
+# whole pytest suite. The two stay apart because the drift between them is
+# guarded from the Python side: tests/review_api/test_frontend_openapi_snapshot.py
+# compares frontend/src/api/openapi.snapshot.json against the schema FastAPI
+# publishes, so a backend contract change fails in the job where that change
+# was made. Installing Python here to re-check the same thing would only move
+# the red build further from its cause.
+#
+# Node 22 rather than 24, even though local development uses 24. It is the
+# oldest major every locked dependency accepts -- vitest 5 excludes Node 20
+# outright (`^22.12.0 || ^24.0.0 || >=26.0.0`), and eslint 10 and jsdom 29 each
+# want `^22.13.0` or newer -- so it is the floor this package set actually
+# supports, and it is an Active LTS. Pinning the floor means CI fails if a
+# future dependency quietly raises it, which a job tracking the newest major
+# would never notice.
+name: Frontend CI
+
+on:
+  push:
+    branches:
+      - main
+      - "sprint-*"
+  pull_request:
+    branches:
+      - main
+
+# Read-only. This workflow builds and tests; it publishes nothing, deploys
+# nothing, and needs no token beyond checkout's.
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci`, never `npm install`: it installs exactly the locked tree and
+      # fails if package.json and the lockfile disagree, which is the property
+      # that makes a CI run reproducible.
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # `--run` because vitest watches by default, and a watching test runner
+      # in CI is a job that never ends.
+      - name: Test
+        run: npm run test -- --run
+
+      - name: Build
+        run: npm run build
