@@ -1,5 +1,5 @@
 import type { ReviewStatus } from '../api/types';
-import { reviewStatusLabel } from '../lib/status';
+import { reviewStatusLabel } from '../lib/labels';
 import styles from './StatusPill.module.css';
 
 /**

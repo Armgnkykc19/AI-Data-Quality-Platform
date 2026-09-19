@@ -47,31 +47,3 @@
     grid-template-columns: 24rem minmax(0, 1fr);
   }
 }
-
-.detail {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: var(--space-4);
-  min-width: 0;
-}
-
-.detailHeading {
-  margin: 0 0 var(--space-2);
-  font-size: 1.125rem;
-}
-
-.detailBody {
-  margin: 0 0 var(--space-2);
-  color: var(--color-text-muted);
-}
-
-.detailBody:last-child {
-  margin-bottom: 0;
-}
-
-.detailId {
-  font-family: var(--font-mono);
-  color: var(--color-text);
-  overflow-wrap: anywhere;
-}

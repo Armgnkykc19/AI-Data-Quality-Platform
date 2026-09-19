@@ -88,6 +88,18 @@ export function createFetchStub() {
     },
 
     /**
+     * Answer by URL rather than by call order.
+     *
+     * The workspace issues three requests at once for one case, so a
+     * sequential stub would make tests depend on the order React happens to
+     * start them in. Throwing from the resolver rejects the request, which is
+     * how a transport failure is expressed.
+     */
+    routeBy(resolve: (url: string) => Response | Promise<Response>): void {
+      mock.mockImplementation(async (input) => resolve(String(input)));
+    },
+
+    /**
      * Leave the next request hanging, and return the handle that completes it.
      *
      * The signal is watched so an aborted request rejects the way a real

@@ -1,5 +1,5 @@
 import { REVIEW_STATUSES, type ReviewStatus } from '../../api/types';
-import { reviewStatusLabel } from '../../lib/status';
+import { reviewStatusLabel } from '../../lib/labels';
 import styles from './queue.module.css';
 
 /**

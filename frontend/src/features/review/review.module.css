@@ -1,0 +1,296 @@
+.workspace {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.workspaceHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.workspaceHeading {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.refresh {
+  font: inherit;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.refresh:hover:not(:disabled) {
+  background: var(--color-background);
+}
+
+.refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Always mounted so its text changes rather than the region appearing. */
+.live {
+  margin: 0;
+  min-height: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.placeholder {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
+.divergence {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.caseHeader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.pair {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+
+.record {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  min-width: 0;
+}
+
+.recordLabel {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.recordId {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+/* ----------------------------------------------------------- fact tables */
+
+.facts,
+.numbers {
+  margin: 0;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+
+.fact,
+.number {
+  min-width: 0;
+}
+
+.factLabel {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.factValue {
+  margin: var(--space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+
+.numberValue {
+  margin: var(--space-1) 0 0;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.monospace {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.breakAnywhere {
+  overflow-wrap: anywhere;
+}
+
+/* --------------------------------------------------------------- sections */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.sectionHeading {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.sectionNote {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.fieldLabel {
+  margin: var(--space-2) 0 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.prose {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.absent {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.notes {
+  margin: 0;
+  padding-left: var(--space-6);
+}
+
+/* --------------------------------------------------------------- evidence */
+
+.evidenceList,
+.advisoryList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.evidenceItem,
+.advisoryItem {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  min-width: 0;
+}
+
+.evidenceType {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.evidenceMeta {
+  margin: var(--space-2) 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.blockingKey {
+  margin: 0;
+}
+
+.sensitiveNote {
+  margin: var(--space-1) 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+/* --------------------------------------------------------------- advisory */
+
+.advisoryVerdict {
+  margin: 0 0 var(--space-2);
+  font-weight: 600;
+}
+
+/* Deliberately unlike the status pill: an advisory must not read as an
+   outcome at a glance. */
+.advisoryTag {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--color-text-muted);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--color-text-muted);
+}
+
+.reasonCodes {
+  margin: var(--space-1) 0 0;
+  padding-left: var(--space-6);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+/* --------------------------------------------------------------- timeline */
+
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.timelineItem {
+  border-left: 3px solid var(--color-border);
+  padding: 0 0 0 var(--space-3);
+  min-width: 0;
+}
+
+.timelineLabel {
+  margin: 0;
+  font-weight: 600;
+}
+
+.timelineTime {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.timelineMeta {
+  margin: var(--space-1) 0 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}

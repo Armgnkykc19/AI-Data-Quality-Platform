@@ -1,6 +1,6 @@
 import { EmptyState } from '../../components/EmptyState';
 import type { ReviewCaseSummary, ReviewStatus } from '../../api/types';
-import { reviewStatusLabel } from '../../lib/status';
+import { reviewStatusLabel } from '../../lib/labels';
 import { QueueRow } from './QueueRow';
 import { QueueSkeleton } from './QueueSkeleton';
 import styles from './queue.module.css';

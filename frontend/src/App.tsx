@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { DEFAULT_PAGE_LIMIT, type ReviewStatus } from './api/types';
 import { QueuePanel } from './features/queue/QueuePanel';
+import { ReviewWorkspace } from './features/review/ReviewWorkspace';
 import { useReviewCases } from './hooks/useReviewCases';
 import styles from './App.module.css';
 
@@ -67,6 +68,17 @@ export default function App() {
     }
   }, [data]);
 
+  // The queue row for the selected case, only when it is on the visible page.
+  //
+  // Handed to the workspace so it can compare the summary's version against
+  // the detail's and say when the two disagree. Deliberately null when the
+  // selection is outside the current slice: there is nothing to compare, and
+  // a comparison against a row from a different filter or page would report a
+  // divergence that says more about where the reviewer navigated than about
+  // the case.
+  const selectedQueueSummary =
+    data?.items.find((item) => item.review_case_id === selectedReviewCaseId) ?? null;
+
   const handleStatusFilterChange = (status: ReviewStatus | null) => {
     setStatusFilter(status);
     // A page number means nothing across two different filters, and page four
@@ -101,37 +113,12 @@ export default function App() {
           onRefresh={queue.refresh}
         />
 
-        <SelectedCasePlaceholder reviewCaseId={selectedReviewCaseId} />
+        <ReviewWorkspace
+          reviewCaseId={selectedReviewCaseId}
+          selectedQueueSummary={selectedQueueSummary}
+          onRefreshQueue={queue.refresh}
+        />
       </main>
     </div>
-  );
-}
-
-/**
- * Where the case workspace will go.
- *
- * It reports the selection and nothing else. No status, no score, no evidence:
- * Phase B never requests the case detail, so any field shown here would be
- * either copied out of a queue row and presented as detail, or invented. A
- * panel that looked finished would also make it hard to tell, in a screenshot,
- * that the workspace does not exist yet.
- */
-function SelectedCasePlaceholder({ reviewCaseId }: { reviewCaseId: string | null }) {
-  return (
-    <section className={styles.detail} aria-labelledby="workspace-heading">
-      <h2 className={styles.detailHeading} id="workspace-heading">
-        Review workspace
-      </h2>
-      {reviewCaseId === null ? (
-        <p className={styles.detailBody}>Select a review case to inspect its details.</p>
-      ) : (
-        <>
-          <p className={styles.detailBody}>
-            Case selected: <span className={styles.detailId}>{reviewCaseId}</span>
-          </p>
-          <p className={styles.detailBody}>Case details will load in the review workspace.</p>
-        </>
-      )}
-    </section>
   );
 }

@@ -230,3 +230,40 @@ export const resolveRequestWithoutReviewer = {
   decision: 'NO_MATCH',
   expected_version: 3,
 } satisfies ResolveReviewCaseRequest;
+
+/**
+ * Case-B variants, distinguishable from case A at a glance.
+ *
+ * The cross-case tests need to assert that nothing belonging to case A is
+ * rendered while case B is selected, which only works if the two carry
+ * visibly different content.
+ */
+export const caseBEventHistory = [
+  { ...caseCreatedEvent, event_id: 11, occurred_at_utc: '2026-09-17T08:00:00Z' },
+  { ...deferredResolutionEvent, event_id: 12, reviewer_id: 'case-b-reviewer' },
+] satisfies ReviewEventRead[];
+
+export const caseBSuggestion = {
+  ...advisorySuggestion,
+  suggestion_id: 'ss-000000000000000b',
+  suggestion: 'SUGGEST_MATCH',
+  reason_codes: ['CASE_B_ONLY_REASON'],
+} satisfies SemanticSuggestionRead;
+
+/** The advisory outcome that carries no verdict either way. */
+export const insufficientEvidenceSuggestion = {
+  ...advisorySuggestion,
+  suggestion_id: 'ss-000000000000000c',
+  suggestion: 'INSUFFICIENT_EVIDENCE',
+  reason_codes: [],
+} satisfies SemanticSuggestionRead;
+
+/** A live provider call, so `live: true` has a fixture behind it. */
+export const liveSuggestion = {
+  ...advisorySuggestion,
+  suggestion_id: 'ss-000000000000000d',
+  suggestion: 'SUGGEST_MATCH',
+  provider: 'openai',
+  requested_model: 'test-model-live',
+  live: true,
+} satisfies SemanticSuggestionRead;
