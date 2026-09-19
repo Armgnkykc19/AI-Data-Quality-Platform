@@ -5,6 +5,7 @@ import { CaseEvidence } from './CaseEvidence';
 import { CaseHeader } from './CaseHeader';
 import { EventHistory } from './EventHistory';
 import { MachineAssessment } from './MachineAssessment';
+import { ResolutionPanel } from './ResolutionPanel';
 import { ResolutionSummary } from './ResolutionSummary';
 import { ReviewSummary } from './ReviewSummary';
 import { SemanticAdvisory } from './SemanticAdvisory';
@@ -20,9 +21,21 @@ import styles from './review.module.css';
  * case. Only the detail is primary, because without it there is no pair, no
  * status and nothing for the other panels to be about.
  *
- * Read-only, all of it. There is no decision control on this screen, no
- * reviewer identity field, and no request that writes anything. Phase D owns
- * resolution.
+ * One write lives here, and it lives in exactly one child. `ResolutionPanel`
+ * owns the decision controls, the confirmation and the single
+ * `POST .../resolve`; this component owns the three reads and hands the panel
+ * the authoritative detail plus a way to ask for all of them again. Nothing
+ * else on this screen writes, and the panel cannot read anything the
+ * workspace does not pass it.
+ *
+ * The panel is keyed by the selected case and sits outside the branch that
+ * chooses between the case, the loading placeholder and the failure banner.
+ * Both properties are deliberate. The key means a resolution outcome can
+ * never outlive the case it belonged to. Its position means a post-write
+ * refresh that itself fails does not take the outcome off screen with it --
+ * "we recorded your decision but could not re-read the case" is exactly the
+ * state a reviewer most needs to be told about, and it is the one state where
+ * the detail read has failed.
  *
  * Two boundaries worth naming:
  *
@@ -60,6 +73,26 @@ export function ReviewWorkspace({
     history.refresh();
   };
 
+  /**
+   * Converge on server state after a write, or after one whose result is
+   * unknown.
+   *
+   * Detail and history, because a resolution changes both. The queue, because
+   * a resolved case leaves the pending filter and the reviewer should not be
+   * looking at a row that no longer belongs there.
+   *
+   * Not the semantic suggestions. They are immutable advisory observations
+   * Sprint 09 recorded before any of this, and resolving a case cannot change
+   * them -- so re-reading them would be a request whose answer is known in
+   * advance, issued at the exact moment the reviewer is least interested in
+   * advisory content.
+   */
+  const reconcileAfterWrite = () => {
+    detail.refresh();
+    history.refresh();
+    onRefreshQueue();
+  };
+
   if (reviewCaseId === null) {
     return (
       <Shell>
@@ -68,64 +101,90 @@ export function ReviewWorkspace({
     );
   }
 
-  if (detail.failure !== null) {
-    return (
-      <Shell>
+  const caseDetail = detail.data;
+  // The case is shown only when the primary read currently holds. A refresh
+  // that failed over previously loaded data still takes the case off screen:
+  // what is held is then known to be behind the server, and a reviewer
+  // deciding from it would be deciding from something stale.
+  const showCase = detail.failure === null && caseDetail !== null;
+
+  const isStaleQueueRow =
+    showCase && selectedQueueSummary !== null && selectedQueueSummary.version !== caseDetail.version;
+
+  const isReadingCase =
+    detail.status === 'loading' ||
+    detail.status === 'updating' ||
+    history.status === 'loading' ||
+    history.status === 'updating';
+  const caseReadFailed = detail.status === 'failed' || history.status === 'failed';
+
+  return (
+    <Shell
+      actions={
+        showCase ? (
+          <button
+            type="button"
+            className={styles.refresh}
+            onClick={refreshCase}
+            disabled={detail.status === 'updating'}
+          >
+            Refresh case
+          </button>
+        ) : undefined
+      }
+    >
+      {detail.failure !== null && (
         <CaseFailure
           failure={detail.failure}
           onRetry={detail.refresh}
           onRefreshQueue={onRefreshQueue}
         />
-      </Shell>
-    );
-  }
+      )}
 
-  if (detail.data === null) {
-    return (
-      <Shell>
+      {detail.failure === null && caseDetail === null && (
         <p className={styles.placeholder} role="status">
           Loading case…
         </p>
-      </Shell>
-    );
-  }
-
-  const isStaleQueueRow =
-    selectedQueueSummary !== null && selectedQueueSummary.version !== detail.data.version;
-
-  return (
-    <Shell
-      actions={
-        <button
-          type="button"
-          className={styles.refresh}
-          onClick={refreshCase}
-          disabled={detail.status === 'updating'}
-        >
-          Refresh case
-        </button>
-      }
-    >
-      <p className={styles.live} role="status">
-        {detail.status === 'updating' ? 'Updating case…' : ''}
-      </p>
-
-      {isStaleQueueRow && (
-        <p className={styles.divergence}>
-          This case changed since the current queue view was loaded. The details below are the
-          review API&rsquo;s current state.
-        </p>
       )}
 
-      <CaseHeader detail={detail.data} />
-      <MachineAssessment detail={detail.data} />
-      <ReviewSummary detail={detail.data} />
-      <CaseEvidence detail={detail.data} />
-      {detail.data.resolution !== null && (
-        <ResolutionSummary resolution={detail.data.resolution} />
+      {showCase && (
+        <>
+          <p className={styles.live} role="status">
+            {detail.status === 'updating' ? 'Updating case…' : ''}
+          </p>
+
+          {isStaleQueueRow && (
+            <p className={styles.divergence}>
+              This case changed since the current queue view was loaded. The details below are the
+              review API&rsquo;s current state.
+            </p>
+          )}
+
+          <CaseHeader detail={caseDetail} />
+          <MachineAssessment detail={caseDetail} />
+          <ReviewSummary detail={caseDetail} />
+          <CaseEvidence detail={caseDetail} />
+          {caseDetail.resolution !== null && (
+            <ResolutionSummary resolution={caseDetail.resolution} />
+          )}
+        </>
       )}
-      <SemanticAdvisory resource={suggestions} />
-      <EventHistory resource={history} />
+
+      <ResolutionPanel
+        key={reviewCaseId}
+        reviewCaseId={reviewCaseId}
+        detail={showCase ? caseDetail : null}
+        isReadingCase={isReadingCase}
+        caseReadFailed={caseReadFailed}
+        onReconcile={reconcileAfterWrite}
+      />
+
+      {showCase && (
+        <>
+          <SemanticAdvisory resource={suggestions} />
+          <EventHistory resource={history} />
+        </>
+      )}
     </Shell>
   );
 }

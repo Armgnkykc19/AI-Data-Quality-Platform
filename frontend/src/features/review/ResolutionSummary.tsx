@@ -1,5 +1,5 @@
 import type { ReviewResolutionRead } from '../../api/types';
-import { reviewStatusLabel } from '../../lib/labels';
+import { humanDecisionLabel } from '../../lib/labels';
 import styles from './review.module.css';
 
 /**
@@ -16,7 +16,9 @@ import styles from './review.module.css';
  * verified. Sprint 13 owns that boundary.
  *
  * `human_decision` uses the decision vocabulary, which is why `DEFER` can
- * appear here while the case status beside it reads `DEFERRED`.
+ * appear here while the case status beside it reads `DEFERRED`. The spelling
+ * comes from the shared decision labels, so the decision a reviewer submits
+ * and the decision this panel reports back can never drift apart.
  */
 export function ResolutionSummary({ resolution }: { resolution: ReviewResolutionRead }) {
   return (
@@ -57,15 +59,4 @@ export function ResolutionSummary({ resolution }: { resolution: ReviewResolution
       </p>
     </section>
   );
-}
-
-/**
- * `DEFER` reads "Defer" here, not "Deferred".
- *
- * The status pill in the header already says `DEFERRED`; this field is the
- * decision that produced it, and relabelling one as the other would erase a
- * distinction the API is careful to keep.
- */
-function humanDecisionLabel(decision: ReviewResolutionRead['human_decision']): string {
-  return decision === 'DEFER' ? 'Defer' : reviewStatusLabel(decision);
 }

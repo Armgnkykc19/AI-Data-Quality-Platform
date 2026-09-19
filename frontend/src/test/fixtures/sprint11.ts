@@ -210,6 +210,50 @@ export const resolveResponse = {
   event: { ...deferredResolutionEvent, event_id: null },
 } satisfies ResolveReviewCaseResponse;
 
+/**
+ * The same case after a MATCH decision: terminal status, version advanced.
+ *
+ * Phase D needs a before/after pair for one case id, because the whole point
+ * of the post-resolution refetch is that the second `GET` of the same URL
+ * answers differently from the first.
+ */
+export const matchedCaseDetail = {
+  ...pendingCaseDetail,
+  status: 'MATCH',
+  resolution: {
+    human_decision: 'MATCH',
+    reviewer_id: null,
+    resolution_sequence: 1,
+    downstream_action: 'include_in_canonical_merge',
+  },
+  version: 2,
+  updated_at_utc: '2026-09-18T12:00:00Z',
+} satisfies ReviewCaseDetail;
+
+/** The durable history row the match produced, with the id storage assigned. */
+export const matchResolutionEvent = {
+  event_id: 4,
+  event_type: 'MATCH',
+  occurred_at_utc: '2026-09-18T12:00:00Z',
+  resolution_sequence: 1,
+  reviewer_id: null,
+  suggestion_id: null,
+  is_resolution: true,
+} satisfies ReviewEventRead;
+
+/**
+ * What `POST .../resolve` answers for that match.
+ *
+ * `event.event_id` is null, faithfully: the service returns the event it
+ * handed to storage, and the id is assigned during the write. A client that
+ * wants stable ids re-reads the history endpoint, which is exactly what the
+ * workspace does.
+ */
+export const matchResolveResponse = {
+  case: matchedCaseDetail,
+  event: { ...matchResolutionEvent, event_id: null },
+} satisfies ResolveReviewCaseResponse;
+
 export const healthResponse = { status: 'ok' } satisfies HealthResponse;
 
 /**

@@ -28,6 +28,7 @@
  */
 
 import type {
+  HumanReviewDecision,
   MatchDecisionType,
   ReviewEventType,
   ReviewStatus,
@@ -44,6 +45,24 @@ export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
 
 export function reviewStatusLabel(status: ReviewStatus): string {
   return REVIEW_STATUS_LABELS[status];
+}
+
+/**
+ * `human_review.models.HumanReviewDecision` — what a human submitted, or may.
+ *
+ * `DEFER` reads "Defer", never "Deferred". The status a defer produces is
+ * `DEFERRED`, and collapsing the two spellings would erase a distinction the
+ * API is careful to keep: one is the decision, the other is where the case
+ * ended up.
+ */
+export const HUMAN_DECISION_LABELS: Record<HumanReviewDecision, string> = {
+  MATCH: 'Match',
+  NO_MATCH: 'No match',
+  DEFER: 'Defer',
+};
+
+export function humanDecisionLabel(decision: HumanReviewDecision): string {
+  return HUMAN_DECISION_LABELS[decision];
 }
 
 /** `entity_resolution.models.MatchDecisionType` — what the machine concluded. */

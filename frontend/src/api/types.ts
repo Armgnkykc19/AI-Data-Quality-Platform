@@ -108,6 +108,17 @@ export const DEFAULT_PAGE_LIMIT = 50;
 /** `review_api.models.MAX_PAGE_LIMIT`. A larger `limit` is a 422. */
 export const MAX_PAGE_LIMIT = 200;
 
+/**
+ * `review_api.models.MAX_REVIEWER_ID_LENGTH`. Transport hygiene, not a rule.
+ *
+ * The backend caps the length and deliberately does nothing else: no trim, no
+ * case fold, no emptiness rule, because the value is written verbatim into an
+ * append-only audit row. A browser input may use this as a `maxLength` so a
+ * reviewer is not silently composing a request that will be rejected, and for
+ * nothing else. The server remains the authority.
+ */
+export const MAX_REVIEWER_ID_LENGTH = 256;
+
 // ---------------------------------------------------------------------------
 // Health
 // ---------------------------------------------------------------------------

@@ -93,6 +93,11 @@ function listUrls(): string[] {
   return http.urls().filter((url) => url.startsWith(LIST_PREFIX));
 }
 
+/** Every resolution write, so a test can count them and read the body sent. */
+function resolveCalls() {
+  return http.mock.mock.calls.filter((call) => String(call[0]).endsWith('/resolve'));
+}
+
 async function renderWorkspace(pages: ReviewCaseListResponse[] = [FIRST_PAGE]) {
   listPages = [...pages];
   const user = userEvent.setup();
@@ -321,7 +326,7 @@ describe('phase boundary', () => {
     }
   });
 
-  it('issues no write request at all', async () => {
+  it('writes nothing while the reviewer only reads and refreshes', async () => {
     const user = await renderWorkspace();
     await selectFirstRow(user);
     await user.click(screen.getByRole('button', { name: 'Refresh case' }));
@@ -331,19 +336,71 @@ describe('phase boundary', () => {
     }
   });
 
-  it('offers no decision control anywhere on the screen', async () => {
-    // Phase D owns MATCH, NO_MATCH and DEFER. Nothing here may resolve a case.
+  it('records a decision only after an explicit confirmation, and once', async () => {
     const user = await renderWorkspace();
     await selectFirstRow(user);
 
-    // Scoped to the workspace: "Match" and "No match" exist in the queue as
-    // status filters, which are not decision controls.
+    // Scoped to the workspace: "Match" and "No match" also exist in the queue
+    // as status filters, which are not decision controls.
     const workspace = within(screen.getByRole('region', { name: 'Review workspace' }));
-    for (const name of [/^match$/i, /^no match$/i, /^defer$/i, /resolve/i]) {
-      expect(workspace.queryByRole('button', { name })).toBeNull();
+    await user.click(workspace.getByRole('button', { name: 'Match' }));
+    expect(resolveCalls()).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => {
+      expect(resolveCalls()).toHaveLength(1);
+    });
+    const [url, init] = resolveCalls()[0] as [string, RequestInit];
+    expect(url).toBe(`${detailUrl(PENDING_CASE_ID)}/resolve`);
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(String(init.body))).toEqual({
+      decision: 'MATCH',
+      expected_version: pendingCaseDetail.version,
+      reviewer_id: null,
+    });
+
+    // The queue is re-read so a resolved case can leave the pending filter.
+    await waitFor(() => {
+      expect(listUrls().length).toBeGreaterThan(1);
+    });
+    expect(resolveCalls()).toHaveLength(1);
+  });
+
+  it('keeps identity, semantics and scheduling out of Sprint 12', async () => {
+    const user = await renderWorkspace();
+    await selectFirstRow(user);
+
+    await user.type(
+      screen.getByLabelText('Reviewer label (optional)'),
+      'desk-3',
+    );
+    await user.click(
+      within(screen.getByRole('region', { name: 'Review workspace' })).getByRole('button', {
+        name: 'Defer',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(resolveCalls()).toHaveLength(1);
+    });
+
+    for (const [url, init] of http.mock.mock.calls) {
+      const path = String(url);
+      // Only the five published operations, all same-origin and relative.
+      expect(path.startsWith('/api/v1/review-cases') || path === '/health').toBe(true);
+      expect(path).not.toMatch(/auth|login|token|session|tenant|org|register|bootstrap/i);
+      // Sprint 11 publishes no way to generate a suggestion over HTTP.
+      expect(path.endsWith('/semantic-suggestions') && (init?.method ?? 'GET') !== 'GET').toBe(
+        false,
+      );
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      expect(Object.keys(headers).map((key) => key.toLowerCase())).not.toContain('authorization');
     }
-    expect(workspace.getAllByRole('button').map((button) => button.textContent)).toEqual([
-      'Refresh case',
-    ]);
+
+    // The unverified label reaches the request and nowhere else.
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(document.cookie).toBe('');
   });
 });
