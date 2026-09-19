@@ -9,10 +9,17 @@
   min-width: 0;
 }
 
+/*
+ * Wraps rather than squeezing. Without `flex-wrap`, a 320px viewport shrinks
+ * both children below their content width and the heading and the button each
+ * break onto two lines in place; wrapping lets them keep their natural width
+ * and stack instead.
+ */
 .header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
@@ -26,11 +33,17 @@
 .pageButton,
 .filter {
   font: inherit;
+  /* A comfortable target on a touch screen, and above the WCAG 2.2 minimum
+     without changing how any of these controls look on a desktop. */
+  min-height: 2.25rem;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   background: var(--color-surface);
   color: inherit;
+  /* These labels are two short words; breaking "Previous page" across two
+     lines to save eight pixels helps nobody. */
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -142,13 +155,17 @@
   color: var(--color-text-muted);
 }
 
+/*
+ * Wrapped, not truncated. An ellipsis would leave the case identifier
+ * readable only by hovering, which is no help on a touch screen and none at
+ * all to a keyboard user -- and this is the value a reviewer quotes when they
+ * report something about a case.
+ */
 .rowId {
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .skeleton {
@@ -189,6 +206,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3);
   border-top: 1px solid var(--color-border);
   padding-top: var(--space-3);

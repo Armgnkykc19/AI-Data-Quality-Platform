@@ -9,10 +9,12 @@
   min-width: 0;
 }
 
+/* Wraps for the same reason as the queue header: see `queue.module.css`. */
 .workspaceHeader {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
@@ -23,6 +25,8 @@
 
 .refresh {
   font: inherit;
+  min-height: 2.25rem;
+  white-space: nowrap;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);

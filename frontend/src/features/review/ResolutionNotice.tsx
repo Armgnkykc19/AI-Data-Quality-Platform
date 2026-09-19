@@ -1,3 +1,5 @@
+import type { RefObject } from 'react';
+
 import styles from './resolution.module.css';
 
 /**
@@ -10,8 +12,17 @@ import styles from './resolution.module.css';
  * is good news, and it does not need to interrupt.
  *
  * `followUp` carries the reconciliation line -- "the case is being re-read",
- * or "it could not be re-read" -- so the outcome and the state of the
- * authoritative refresh are never conflated into one sentence.
+ * or "it could not be re-read" -- and sits deliberately *outside* the live
+ * region. The workspace already announces "Updating case…" from its own status
+ * region while exactly that refresh is running, and a second live region
+ * narrating the same refresh would talk over it. What belongs in the
+ * announcement is the outcome; the progress of the refresh is on screen for
+ * anyone who wants it, and is announced once, by the region that owns it.
+ *
+ * `containerRef` exists for focus, not for styling. When an outcome appears,
+ * the control the reviewer was using -- the Confirm button, and on a terminal
+ * result the whole decision area -- is unmounted underneath them, so something
+ * stable has to receive focus or it falls to `<body>`.
  *
  * Every string reaching this component is written by this application. No
  * response body, status code, path, exception text or backend message is
@@ -22,21 +33,22 @@ export function ResolutionNotice({
   title,
   description,
   followUp,
+  containerRef,
 }: {
   tone: 'success' | 'attention';
   title: string;
   description: string;
   followUp?: string;
+  containerRef?: RefObject<HTMLDivElement | null>;
 }) {
   const toneClass = tone === 'success' ? styles.noticeSuccess : styles.noticeAttention;
 
   return (
-    <div
-      className={`${styles.notice} ${toneClass}`}
-      role={tone === 'success' ? 'status' : 'alert'}
-    >
-      <p className={styles.noticeTitle}>{title}</p>
-      <p className={styles.noticeBody}>{description}</p>
+    <div className={`${styles.notice} ${toneClass}`} ref={containerRef} tabIndex={-1}>
+      <div role={tone === 'success' ? 'status' : 'alert'}>
+        <p className={styles.noticeTitle}>{title}</p>
+        <p className={styles.noticeBody}>{description}</p>
+      </div>
       {followUp !== undefined && <p className={styles.noticeFollowUp}>{followUp}</p>}
     </div>
   );

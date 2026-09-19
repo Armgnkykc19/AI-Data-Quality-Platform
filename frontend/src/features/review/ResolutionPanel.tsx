@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import type { HumanReviewDecision, ReviewCaseDetail } from '../../api/types';
 import { useResolveReviewCase, type ResolveOutcome } from '../../hooks/useResolveReviewCase';
@@ -74,6 +74,7 @@ export function ResolutionPanel({
 
   const decisionRefs = useRef(new Map<HumanReviewDecision, HTMLButtonElement | null>());
   const confirmationRef = useRef<HTMLElement | null>(null);
+  const noticeRef = useRef<HTMLDivElement | null>(null);
 
   const capturedIntent = state.kind === 'confirming' ? state.intent : null;
 
@@ -103,6 +104,19 @@ export function ResolutionPanel({
       confirmationRef.current?.focus();
     }
   }, [activeIntent]);
+
+  // When a result arrives, whatever the reviewer was using is removed: the
+  // Confirm button always, and on a terminal result the entire decision area.
+  // Without this, focus falls to `<body>` and a keyboard or screen-reader user
+  // is returned to the top of the document with no statement of what happened
+  // -- immediately after recording something that cannot be undone. The notice
+  // is the one element guaranteed to be on screen at that moment.
+  const settledOutcome = state.kind === 'settled' ? state.outcome : null;
+  useEffect(() => {
+    if (settledOutcome !== null) {
+      noticeRef.current?.focus();
+    }
+  }, [settledOutcome]);
 
   const handleChoose = (decision: HumanReviewDecision) => {
     if (detail === null || detail.status !== 'PENDING') {
@@ -194,6 +208,7 @@ export function ResolutionPanel({
           outcome={settled.outcome}
           isReconciling={isReconciling}
           reconcileFailed={reconcileFailed}
+          containerRef={noticeRef}
         />
       )}
 
@@ -243,10 +258,12 @@ function SettledNotice({
   outcome,
   isReconciling,
   reconcileFailed,
+  containerRef,
 }: {
   outcome: ResolveOutcome;
   isReconciling: boolean;
   reconcileFailed: boolean;
+  containerRef: RefObject<HTMLDivElement | null>;
 }) {
   const followUp = isReconciling
     ? 'Refreshing authoritative case state…'
@@ -260,6 +277,7 @@ function SettledNotice({
         tone="success"
         title="Decision recorded."
         description={`The review API accepted the ${humanDecisionLabel(outcome.decision)} decision for this case.`}
+        containerRef={containerRef}
         {...(followUp === undefined ? {} : { followUp })}
       />
     );
@@ -271,6 +289,7 @@ function SettledNotice({
       tone="attention"
       title={message.title}
       description={message.description}
+      containerRef={containerRef}
       {...(followUp === undefined ? {} : { followUp })}
     />
   );

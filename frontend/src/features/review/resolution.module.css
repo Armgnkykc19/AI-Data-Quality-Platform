@@ -124,12 +124,31 @@
   font-weight: 700;
 }
 
+/*
+ * Two columns where there is room for two, one where there is not.
+ *
+ * The fixed label column is what forces the breakpoint: at 320px it leaves the
+ * value column about 40px wide, and a record id then wraps one character per
+ * line. Stacking each label above its value keeps every published identifier
+ * fully readable, which matters more here than the table shape -- this is the
+ * surface a reviewer checks before recording something irreversible.
+ */
 .summary {
   display: grid;
-  grid-template-columns: minmax(7rem, max-content) 1fr;
+  grid-template-columns: minmax(7rem, max-content) minmax(0, 1fr);
   gap: var(--space-1) var(--space-4);
   margin: 0 0 var(--space-3);
   font-size: 0.875rem;
+}
+
+@media (max-width: 30rem) {
+  .summary {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .summaryValue {
+    margin-bottom: var(--space-2);
+  }
 }
 
 .summaryLabel {
@@ -156,6 +175,8 @@
 
 .confirm,
 .cancel {
+  min-height: 2.25rem;
+  white-space: nowrap;
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius);
   font: inherit;

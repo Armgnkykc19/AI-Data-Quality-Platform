@@ -144,6 +144,23 @@ function requestsTo(url: string): number {
   return http.urls().filter((candidate) => candidate === url).length;
 }
 
+/** Leave the next detail read unanswered, and hand back its release. */
+function holdDetail(): () => void {
+  let release: () => void = () => undefined;
+  routes.set(
+    detailUrl(PENDING_CASE_ID),
+    () =>
+      new Promise<Response>((resolvePromise) => {
+        release = () => {
+          resolvePromise(jsonResponse(pendingCaseDetail));
+        };
+      }),
+  );
+  return () => {
+    release();
+  };
+}
+
 /** Choose a decision and confirm it, which is the only path to a request. */
 async function decide(
   user: ReturnType<typeof userEvent.setup>,
@@ -430,6 +447,96 @@ describe('the confirmation step', () => {
       expect(screen.getByText('Decision recorded.')).toBeInTheDocument();
     });
     expect(resolveCalls()).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard and focus
+// ---------------------------------------------------------------------------
+
+describe('keyboard operation of the confirmation', () => {
+  it.each(['{Enter}', ' '])('cancels with %s and writes nothing', async (key) => {
+    // A keyboard activation of Cancel must be exactly as inert as a click.
+    // Cancel restores focus to the decision control synchronously, so this is
+    // also the shape in which a stray second activation would land on a live
+    // button -- which is why the request count is asserted, not just the copy.
+    const { user } = await renderPending();
+
+    await user.click(decisionButton('Match'));
+    Array.from(document.querySelectorAll('button'))
+      .find((button) => button.textContent === 'Cancel')
+      ?.focus();
+    await user.keyboard(key);
+
+    expect(resolveCalls()).toHaveLength(0);
+    expect(screen.queryByRole('region', { name: 'Confirm this decision' })).toBeNull();
+    expect(decisionButton('Match')).toHaveFocus();
+  });
+
+  it('opens the confirmation from the keyboard without writing', async () => {
+    const { user } = await renderPending();
+
+    decisionButton('Defer').focus();
+    await user.keyboard('{Enter}');
+
+    expect(screen.getByRole('region', { name: 'Confirm this decision' })).toBeInTheDocument();
+    expect(resolveCalls()).toHaveLength(0);
+  });
+});
+
+describe('focus after a result', () => {
+  it('moves focus to the outcome when the decision controls disappear', async () => {
+    const { user } = await renderPending();
+    serveResolve(jsonResponse(matchResolveResponse), () => {
+      serve(detailUrl(PENDING_CASE_ID), { ...matchedCaseDetail, review_case_id: PENDING_CASE_ID });
+      serve(eventsUrl(PENDING_CASE_ID), [caseCreatedEvent, matchResolutionEvent]);
+    });
+
+    await decide(user, 'Match');
+
+    await waitFor(() => {
+      expect(screen.getByText('Decision recorded.')).toBeInTheDocument();
+    });
+    // Confirm is gone, and on a terminal result so is the whole decision area.
+    // Without an explicit target, focus would fall to <body>.
+    expect(screen.getByText('Decision recorded.').closest('[tabindex="-1"]')).toHaveFocus();
+    expect(document.body).not.toHaveFocus();
+  });
+
+  it('moves focus to the outcome after a refusal too', async () => {
+    const { user } = await renderPending();
+    serveResolve(errorResponse('MATCH_NOT_AUTHORIZED', 422));
+
+    await decide(user, 'Match');
+
+    await waitFor(() => {
+      expect(screen.getByText('The review API did not authorize this match.')).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('The review API did not authorize this match.').closest('[tabindex="-1"]'),
+    ).toHaveFocus();
+  });
+
+  it('leaves the refresh narration to the one region that owns it', async () => {
+    const { user } = await renderPending();
+    const release = holdDetail();
+    serveResolve(jsonResponse(matchResolveResponse));
+
+    await decide(user, 'Match');
+
+    await waitFor(() => {
+      expect(screen.getByText(/Refreshing authoritative case state/i)).toBeInTheDocument();
+    });
+    // The workspace's own status region already says "Updating case…" for this
+    // very refresh; the follow-up line is therefore outside the live region so
+    // the two do not announce over each other.
+    const followUp = screen.getByText(/Refreshing authoritative case state/i);
+    expect(followUp.closest('[role="status"]')).toBeNull();
+    expect(followUp.closest('[role="alert"]')).toBeNull();
+    // The outcome itself is still announced.
+    expect(screen.getByText('Decision recorded.').closest('[role="status"]')).not.toBeNull();
+
+    release();
   });
 });
 
