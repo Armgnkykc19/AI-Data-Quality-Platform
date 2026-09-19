@@ -42,3 +42,25 @@ const TERMINAL_SET: ReadonlySet<string> = new Set<string>(TERMINAL_REVIEW_STATUS
 export function isTerminalReviewStatus(status: ReviewStatus): status is TerminalReviewStatus {
   return TERMINAL_SET.has(status);
 }
+
+/**
+ * How each status is spelled for a reader.
+ *
+ * The wire tokens are shouted constants; a queue of them is hard to scan. The
+ * mapping is exhaustive over `ReviewStatus` by type, so adding a status to the
+ * contract fails the build here rather than rendering a raw token.
+ *
+ * Only the spelling changes. `MATCH` does not become "Matched" and `DEFERRED`
+ * does not become "Paused": a label that softened what a terminal decision
+ * means would misdescribe what the reviewer is looking at.
+ */
+export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
+  PENDING: 'Pending',
+  MATCH: 'Match',
+  NO_MATCH: 'No match',
+  DEFERRED: 'Deferred',
+};
+
+export function reviewStatusLabel(status: ReviewStatus): string {
+  return REVIEW_STATUS_LABELS[status];
+}

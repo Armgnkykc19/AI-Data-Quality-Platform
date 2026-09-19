@@ -1,0 +1,30 @@
+.pill {
+  display: inline-block;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  line-height: 1.5rem;
+  white-space: nowrap;
+  background: var(--color-surface);
+}
+
+.PENDING {
+  border-color: #9aa7bd;
+  background: #eef2f8;
+}
+
+.MATCH {
+  border-color: #7fae87;
+  background: #eef6ef;
+}
+
+.NO_MATCH {
+  border-color: #c79191;
+  background: #f9eeee;
+}
+
+.DEFERRED {
+  border-color: #c2ac78;
+  background: #f8f3e6;
+}

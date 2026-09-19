@@ -1,0 +1,202 @@
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.heading {
+  margin: 0;
+  font-size: 1.125rem;
+}
+
+.refresh,
+.clearFilter,
+.pageButton,
+.filter {
+  font: inherit;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  color: inherit;
+  cursor: pointer;
+}
+
+.refresh:hover:not(:disabled),
+.clearFilter:hover,
+.pageButton:hover:not(:disabled),
+.filter:hover {
+  background: var(--color-background);
+}
+
+.refresh:disabled,
+.pageButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.filterActive {
+  background: var(--color-selected-surface);
+  border-color: var(--color-selected-border);
+  font-weight: 600;
+}
+
+/* Always present so the region is announced when its text changes, rather
+   than being inserted at the moment it has something to say. */
+.live {
+  margin: 0;
+  min-height: 1.25rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.bannerSlot {
+  margin: 0;
+}
+
+.outsideView {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+
+.listRegion {
+  min-height: 6rem;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row {
+  width: 100%;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.row:hover {
+  background: var(--color-background);
+}
+
+/* Selection is also stated as text inside the row, so this border and tint
+   are reinforcement rather than the only signal. */
+.rowSelected {
+  background: var(--color-selected-surface);
+  border-color: var(--color-selected-border);
+  border-left-width: 4px;
+}
+
+.rowPair {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.rowMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 0.875rem;
+}
+
+.rowScore {
+  font-variant-numeric: tabular-nums;
+}
+
+.rowTime {
+  color: var(--color-text-muted);
+}
+
+.rowId {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.skeletonRow {
+  height: 4.5rem;
+  border-radius: var(--radius);
+  background: linear-gradient(
+    90deg,
+    var(--color-background) 25%,
+    #eceff4 37%,
+    var(--color-background) 63%
+  );
+  background-size: 400% 100%;
+  animation: skeletonShimmer 1.4s ease infinite;
+}
+
+@keyframes skeletonShimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeletonRow {
+    animation: none;
+  }
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.range {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}

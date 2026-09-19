@@ -258,6 +258,19 @@ export function decodeErrorEnvelope(httpStatus: number, body: unknown): ApiFailu
 }
 
 /**
+ * The failure carried by a thrown error, whatever the error turned out to be.
+ *
+ * Callers that catch from a client function want an `ApiFailure` to branch on,
+ * and every rejection this module produces carries one. Anything else reaching
+ * a catch block is a defect in the caller rather than a report from the API,
+ * so it is reported as `malformed` with no status: there is no contract
+ * response behind it and nothing about it is safe to show.
+ */
+export function failureFromError(error: unknown): ApiFailure {
+  return isApiRequestError(error) ? error.failure : { kind: 'malformed', httpStatus: null };
+}
+
+/**
  * Classify a `fetch` rejection.
  *
  * `fetch` rejects with a `DOMException` named `AbortError` when the signal
