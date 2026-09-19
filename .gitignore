@@ -38,6 +38,13 @@ Thumbs.db
 desktop.ini
 
 # =========================
+# Node / frontend
+# =========================
+node_modules/
+.vite/
+*.tsbuildinfo
+
+# =========================
 # Build / packaging
 # =========================
 build/
