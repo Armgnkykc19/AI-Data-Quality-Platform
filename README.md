@@ -121,17 +121,17 @@ Identity lives in the `identity/` package: `User`, `Organization`, `Organization
 
 The review database is now schema **2.0.0**, and a 1.0.0 database cannot be opened: its review data belongs to no organization and no queue, so the process refuses to start rather than inventing an owner. Nothing is migrated automatically, no table is dropped, and no file is rewritten. The explicit operator migration command belongs to a later phase; a development database can be recreated instead.
 
-### Creating a tenant
+### Provisioning a tenant
 
-An organization is created by an operator, never by an HTTP request or as a side effect of registering a workflow:
+Organizations and review queues are created by an operator, never by an HTTP request and never as a side effect of registering a workflow. Provisioning a tenant resource and generating a workflow are separate decisions, so they are separate commands:
 
 ```bash
 python scripts/manage_human_review.py create-organization --slug acme --name "Acme Inc."
 python scripts/manage_human_review.py list-organizations
-python scripts/manage_human_review.py create-review-queue --organization acme --name default
+python scripts/manage_human_review.py create-review-queue --organization acme --name production-review
 ```
 
-Registering a workflow then names the tenant that owns it — see Sprint 11 below.
+Registering a workflow then names both of them explicitly, and creates neither — see Sprint 11 below.
 
 ## Sprint 12
 
@@ -218,11 +218,12 @@ Trusted workflow registration is an operator action, never an HTTP request: the 
 
 ```bash
 python scripts/manage_human_review.py create-organization --slug acme --name "Acme Inc."
+python scripts/manage_human_review.py create-review-queue --organization acme --name production-review
 python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo \
-    --register-review-queue --organization acme --review-queue default
+    --register-review-queue --organization acme --review-queue production-review
 ```
 
-`--register-review-queue` is opt-in; without it `generate` writes the report and nothing durable. `--organization` is required alongside it and must name an organization that already exists — the command will not create one, so a mistyped slug is an error (exit code 6) rather than a new tenant holding review data. `--review-queue` names the queue inside that organization, defaults to `default`, and is created on first use. `--review-db PATH` overrides the target database for that run. The queue lives at `storage/review_queue.db`, configured in `configs/review_persistence.yaml`.
+`--register-review-queue` is opt-in; without it `generate` writes the report and nothing durable. With it, both `--organization` and `--review-queue` are required and both must already exist: **this command provisions nothing.** A missing argument is a usage error (exit code 1), and a name that resolves to nothing — a misspelled slug, a misspelled queue, or a queue that belongs to a different organization — is refused with exit code 6, leaving the database exactly as it was. Nothing is created to satisfy the request. `--review-db PATH` overrides the target database for that run. The queue lives at `storage/review_queue.db`, configured in `configs/review_persistence.yaml`.
 
 Re-running the command with the same input is an idempotent no-op **within that queue**: no case is duplicated, no history event is appended, and a case a reviewer has already resolved keeps its status, version and resolution. A changed record set, a changed AUTO_MATCH snapshot, or a different entity-resolution config path is refused with exit code 5, leaving the stored queue exactly as it was. Registering the same workflow into a different queue is independent of all of that.
 

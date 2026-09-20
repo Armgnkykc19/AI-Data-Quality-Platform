@@ -49,11 +49,6 @@ from review_persistence.sqlite import (  # noqa: E402
     open_review_database,
 )
 
-# The queue name a registration uses when the operator does not choose one. A
-# queue name is scoped to its organization, so this is a label inside a tenant
-# the operator named explicitly -- never a tenant of its own.
-DEFAULT_REVIEW_QUEUE_NAME = "default"
-
 EXIT_OK = 0
 EXIT_USAGE = 1
 EXIT_INGESTION = 2
@@ -125,11 +120,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also register the generated workflow into the durable review queue.",
     )
-    # Which tenant owns the registered workflow is never inferred. The
-    # organization must already exist; a misspelled slug is an error, not a new
-    # customer. The queue inside it is named explicitly and created on first
-    # use, which is safe in a way an implicit organization would not be: a
-    # queue belongs to a tenant the operator has already named.
+    # Neither the tenant nor the queue is ever inferred, and this command
+    # creates neither. Both must already exist, named explicitly, because
+    # provisioning a tenant resource and generating a workflow are two
+    # different operator decisions: a missing argument or a misspelled name
+    # must fail, not manufacture a queue nobody asked for.
+    #
+    # Declared without `required=True` because they are required only alongside
+    # --register-review-queue, which argparse cannot express; the check lives
+    # in main() and produces one message covering both.
     generate_parser.add_argument(
         "--organization",
         type=str,
@@ -139,10 +138,10 @@ def parse_args() -> argparse.Namespace:
     generate_parser.add_argument(
         "--review-queue",
         type=str,
-        default=DEFAULT_REVIEW_QUEUE_NAME,
+        default=None,
         help=(
-            "Name of the review queue within the organization. Created if absent. "
-            f"Default: {DEFAULT_REVIEW_QUEUE_NAME!r}."
+            "Name of an existing review queue within the organization. Required with "
+            "--register-review-queue. Create it first with 'create-review-queue'."
         ),
     )
     _add_review_db_argument(generate_parser)
@@ -227,6 +226,25 @@ def _print_registration(
         print("This workflow was already registered; no case was written.")
 
 
+def _missing_registration_targets(args: argparse.Namespace) -> list[str]:
+    """Which registration targets the operator left unnamed, if any.
+
+    Both are reported together rather than one at a time, so an operator who
+    omitted both is not sent round the loop twice. Returns an empty list when
+    registration was not requested at all.
+    """
+    if not args.register_review_queue:
+        return []
+    return [
+        flag
+        for flag, value in (
+            ("--organization <slug>", args.organization),
+            ("--review-queue <name>", args.review_queue),
+        )
+        if not value
+    ]
+
+
 def _require_organization(tenants: SqliteTenantRepository, slug: str) -> Organization:
     """Resolve a slug to an existing organization, or refuse.
 
@@ -243,34 +261,34 @@ def _require_organization(tenants: SqliteTenantRepository, slug: str) -> Organiz
     return organization
 
 
-def _resolve_or_create_queue(
+def _require_review_queue(
     tenants: SqliteTenantRepository,
     *,
     organization: Organization,
     name: str,
-) -> tuple[ReviewQueue, bool]:
-    """Find the named queue in this organization, creating it on first use.
+) -> ReviewQueue:
+    """Resolve an existing queue inside this organization, or refuse.
 
-    Returns the queue and whether it was created, so the operator is told which
-    happened rather than having to infer it from the case counts.
+    Never creates one. Registering a workflow and provisioning a queue are two
+    different operator decisions, and a command that did both would turn a
+    misspelled queue name into a new, empty, permanently orphaned queue --
+    silently, and inside a real tenant.
 
-    Creating here is safe in a way creating an organization would not be: the
-    tenant was named explicitly on the command line and already exists, so the
-    queue is a label inside a boundary the operator chose, not a new boundary.
+    The lookup is scoped to the organization, so a queue of that name owned by
+    a *different* organization is simply absent here. The operator is told the
+    queue does not exist in the organization they named, and learns nothing
+    about who else might own one.
     """
-    existing = tenants.get_review_queue_by_name(
+    queue = tenants.get_review_queue_by_name(
         organization_id=organization.organization_id, name=name
     )
-    if existing is not None:
-        return existing, False
-    created = tenants.create_review_queue(
-        ReviewQueue.create(
-            organization_id=organization.organization_id,
-            name=name,
-            created_at_utc=tenants.timestamp(),
+    if queue is None:
+        raise IdentityNotFoundError(
+            f"Review queue {name!r} does not exist in organization "
+            f"{organization.slug!r}. Create it explicitly with 'create-review-queue' "
+            "before registering a workflow; this command will not create one for you."
         )
-    )
-    return created, True
+    return queue
 
 
 def _register_queue(
@@ -283,7 +301,11 @@ def _register_queue(
     organization_slug: str,
     queue_name: str,
 ) -> int:
-    """Persist the generated workflow into one organization's review queue.
+    """Persist the generated workflow into one existing review queue.
+
+    Both the organization and the queue are resolved before anything is
+    written, and neither is created. This command generates a workflow; it does
+    not provision tenant resources.
 
     The config path is stored with the context so a later resolution authorizes
     against the thresholds the queue was generated with, rather than whatever
@@ -297,9 +319,7 @@ def _register_queue(
     try:
         tenants = SqliteTenantRepository(database)
         organization = _require_organization(tenants, organization_slug)
-        queue, created = _resolve_or_create_queue(
-            tenants, organization=organization, name=queue_name
-        )
+        queue = _require_review_queue(tenants, organization=organization, name=queue_name)
         registration = register_review_workflow(
             SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id),
             state=state,
@@ -310,8 +330,6 @@ def _register_queue(
     finally:
         database.close()
     print(f"Organization: {organization.slug} ({organization.organization_id})")
-    if created:
-        print(f"Created review queue {queue.name!r}.")
     _print_registration(database_path, queue, registration)
     return EXIT_OK
 
@@ -415,13 +433,17 @@ def main() -> int:
             if args.review_db is not None and not args.register_review_queue:
                 print("--review-db has no effect without --register-review-queue.")
                 return EXIT_USAGE
-            if args.register_review_queue and not args.organization:
-                # Refused up front rather than defaulted. There is no such thing
-                # as a default tenant: review data owned by an organization
-                # nobody named is review data nobody owns.
+            missing = _missing_registration_targets(args)
+            if missing:
+                # Refused up front rather than defaulted. Neither a tenant nor
+                # a queue has a sensible default: review data owned by an
+                # organization nobody named is review data nobody owns, and a
+                # queue conjured from an omitted argument is a tenant resource
+                # created by accident.
                 print(
-                    "--register-review-queue requires --organization <slug>. "
-                    "Create one with 'create-organization' if it does not exist."
+                    f"--register-review-queue requires {' and '.join(missing)}. "
+                    "Both must already exist; create them with 'create-organization' "
+                    "and 'create-review-queue' first."
                 )
                 return EXIT_USAGE
             return _generate(args)

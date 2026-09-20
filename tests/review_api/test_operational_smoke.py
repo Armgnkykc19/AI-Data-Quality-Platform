@@ -37,10 +37,11 @@ from scripts import manage_human_review
 
 BASE_URL = "/api/v1/review-cases"
 
-# The tenant the operator creates before registering anything. The chain
-# below runs the real command, so this is also the proof that a queue
-# cannot come into existence without a named organization.
+# The tenant and the queue an operator creates before registering anything.
+# The chain below runs the real commands, so this is also the proof that
+# neither comes into existence as a side effect of registering a workflow.
 ORGANIZATION_SLUG = "operational-smoke"
+REVIEW_QUEUE_NAME = "production-review"
 
 # Two rows sharing an exact email while conflicting on company, city, district
 # and address: strong identity evidence, a score below AUTO_MATCH, and therefore
@@ -94,19 +95,35 @@ def create_organization(monkeypatch: pytest.MonkeyPatch) -> int:
     )
 
 
-def bootstrap_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> int:
-    """The official operator chain: create the tenant, then register a workflow.
+def create_review_queue(monkeypatch: pytest.MonkeyPatch, name: str = REVIEW_QUEUE_NAME) -> int:
+    return run_command(
+        monkeypatch,
+        "create-review-queue",
+        "--organization",
+        ORGANIZATION_SLUG,
+        "--name",
+        name,
+    )
 
-    No ``--review-db`` on either command: the default configured path is the
-    thing being exercised. The organization is created first because
-    registration refuses to invent one -- review data owned by a tenant
-    nobody named would be review data nobody owns.
+
+def bootstrap_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> int:
+    """The official operator chain, all three steps, in order.
+
+    Create the tenant, create the queue, then register a workflow into that
+    existing queue. No ``--review-db`` on any of them: the default configured
+    path is the thing being exercised.
+
+    Each step is separate because each is a separate operator decision.
+    Registration provisions nothing: it refuses to invent an organization, and
+    it refuses to invent a queue -- so both names on the last command must
+    already resolve to something an operator deliberately made.
     """
     csv_path = tmp_path / "customers.csv"
     csv_path.write_text(OPERATIONAL_CSV, encoding="utf-8")
-    created = create_organization(monkeypatch)
-    if created != 0:
-        return created
+    for provision in (create_organization, create_review_queue):
+        created = provision(monkeypatch)
+        if created != 0:
+            return created
     return run_command(
         monkeypatch,
         "generate",
@@ -116,6 +133,8 @@ def bootstrap_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> int:
         "--register-review-queue",
         "--organization",
         ORGANIZATION_SLUG,
+        "--review-queue",
+        REVIEW_QUEUE_NAME,
     )
 
 
