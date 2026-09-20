@@ -96,7 +96,7 @@ Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complet
 
 ## Sprint 13 (in progress)
 
-Sprint 13 adds authentication, organizations and tenant isolation. **Only the persistence foundation exists so far.** There is still no login, no session, no cookie, no authenticated HTTP route and no capability enforcement — the API remains the unauthenticated localhost tool Sprint 11 and 12 describe, and nothing in the browser has changed.
+Sprint 13 adds authentication, organizations and tenant isolation. **Only the backend foundation exists so far.** There is no login endpoint, no cookie, no authenticated HTTP route and no capability enforcement — the API remains the unauthenticated localhost tool Sprint 11 and 12 describe, and nothing in the browser has changed. What exists is the tenant ownership graph and the authentication core beneath it, built and tested before anything is reachable over a socket.
 
 What does exist is the ownership graph everything above it will hang from:
 
@@ -115,7 +115,17 @@ The review queue rather than the organization is the direct owner of review data
 
 **A review case id is unique within a queue, not globally.** `stable_review_case_id` derives it from the reviewed record pair, and record identifiers come from customer data, so two organizations produce the same `RC-...` routinely. Review tables are keyed by `(review_queue_id, review_case_id)`, and child tables reference that pair through composite foreign keys — so an event or a suggestion cannot point at a case in another queue.
 
-Identity lives in the `identity/` package: `User`, `Organization`, `OrganizationMembership` and `MembershipRole`, framework-free and unknown to `human_review`. No password is stored yet; credential material arrives with authentication, in its own table.
+Identity lives in the `identity/` package: `User`, `Organization`, `OrganizationMembership` and `MembershipRole`, framework-free and unknown to `human_review`.
+
+### Authentication core
+
+Passwords are verified with **Argon2id** (`argon2-cffi`), and the encoded hash format belongs to the library — there are no salt or parameter columns of our own. Credentials live in their own table keyed by `user_id`, never on `User`, so reading a display name never carries a verifier. A user is created with no way to log in until an operator sets a password; there is no default credential.
+
+Sessions are **opaque server-side tokens**, not JWTs. A token is 256 random bits and carries nothing — no user id, no organization, no role, no claims — so every fact about a session is read from its row at the moment it is used. The database stores only a SHA-256 digest of the token, so a stolen copy of the file yields no usable credential. Revocation therefore takes effect immediately, and because a session holds no role, removing someone's access does too.
+
+The timing policy is fixed server-side: **60 minutes idle**, **8 hours absolute**, with a 55-minute threshold the frontend will later use to warn. Activity extends the idle window and never the absolute one — that bound exists precisely so a stolen token cannot be kept alive by using it.
+
+Still not implemented, and deliberately: login/logout/session HTTP endpoints, cookies, CSRF handling, frontend auth, "remember me", public registration, password reset, and email verification.
 
 ### Database schema 2.0.0
 

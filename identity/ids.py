@@ -29,17 +29,24 @@ from identity.errors import IdentityValidationError
 __all__ = [
     "MEMBERSHIP_ID_PREFIX",
     "ORGANIZATION_ID_PREFIX",
+    "SESSION_ID_PREFIX",
     "USER_ID_PREFIX",
     "assert_opaque_id",
     "generate_opaque_id",
     "new_membership_id",
     "new_organization_id",
+    "new_session_id",
     "new_user_id",
 ]
 
 USER_ID_PREFIX = "USR-"
 ORGANIZATION_ID_PREFIX = "ORG-"
 MEMBERSHIP_ID_PREFIX = "MEM-"
+
+# A session row's internal name, which is *not* its bearer token. The token is
+# the secret a caller presents; this is the handle a revocation or an audit
+# record refers to, and it is safe to log.
+SESSION_ID_PREFIX = "SES-"
 
 # 128 bits. Enough that collision is not a failure mode worth designing around,
 # and enough that an identifier cannot be guessed by anyone who has seen others.
@@ -71,6 +78,10 @@ def new_organization_id() -> str:
 
 def new_membership_id() -> str:
     return generate_opaque_id(MEMBERSHIP_ID_PREFIX)
+
+
+def new_session_id() -> str:
+    return generate_opaque_id(SESSION_ID_PREFIX)
 
 
 def assert_opaque_id(value: object, *, prefix: str, field_name: str) -> str:

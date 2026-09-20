@@ -5,11 +5,13 @@ mapper, then the workflow authorization context and bundle reconstruction, then
 atomic versioned resolution with append-only history, then immutable advisory
 storage for Sprint 09 semantic suggestions.
 
-Sprint 13 added the tenant graph. ``SqliteTenantRepository`` owns
-organizations, users, memberships and review queues;
-``SqliteReviewCaseRepository`` is now bound to exactly one of those queues and
-scopes every statement to it. Both live in the same database file, because the
-foreign keys that make tenant ownership real cannot span two of them.
+Sprint 13 added the tenant graph and the authentication store.
+``SqliteTenantRepository`` owns organizations, users, memberships and review
+queues; ``SqliteReviewCaseRepository`` is bound to exactly one of those queues
+and scopes every statement to it; ``SqliteCredentialRepository`` and
+``SqliteSessionRepository`` hold password verifiers and sessions. All of them
+live in the same database file, because the foreign keys that make tenant
+ownership and credential ownership real cannot span two of them.
 """
 
 from review_persistence.sqlite.context_mapper import (
@@ -18,6 +20,7 @@ from review_persistence.sqlite.context_mapper import (
     entity_records_to_payload,
     normalized_context_fingerprint,
 )
+from review_persistence.sqlite.credential_repository import SqliteCredentialRepository
 from review_persistence.sqlite.database import (
     Clock,
     ReviewDatabase,
@@ -49,6 +52,7 @@ from review_persistence.sqlite.semantic_mapper import (
     suggestion_payload,
     suggestion_to_row,
 )
+from review_persistence.sqlite.session_repository import SqliteSessionRepository
 from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 
 __all__ = [
@@ -58,7 +62,9 @@ __all__ = [
     "SEMANTIC_SUGGESTION_COLUMNS",
     "Clock",
     "ReviewDatabase",
+    "SqliteCredentialRepository",
     "SqliteReviewCaseRepository",
+    "SqliteSessionRepository",
     "SqliteTenantRepository",
     "StoredWorkflowContext",
     "assert_is_sprint_09_suggestion",

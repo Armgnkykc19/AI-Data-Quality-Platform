@@ -32,20 +32,26 @@ __all__ = [
     "IDENTITY_TABLE_STATEMENTS",
     "ORGANIZATIONS_TABLE",
     "ORGANIZATION_MEMBERSHIPS_TABLE",
+    "PASSWORD_CREDENTIALS_TABLE",
     "REVIEW_QUEUES_TABLE",
     "USERS_TABLE",
+    "USER_SESSIONS_TABLE",
 ]
 
 ORGANIZATIONS_TABLE = "organizations"
 USERS_TABLE = "users"
 ORGANIZATION_MEMBERSHIPS_TABLE = "organization_memberships"
 REVIEW_QUEUES_TABLE = "review_queues"
+PASSWORD_CREDENTIALS_TABLE = "password_credentials"
+USER_SESSIONS_TABLE = "user_sessions"
 
 IDENTITY_TABLES: tuple[str, ...] = (
     ORGANIZATIONS_TABLE,
     USERS_TABLE,
     ORGANIZATION_MEMBERSHIPS_TABLE,
     REVIEW_QUEUES_TABLE,
+    PASSWORD_CREDENTIALS_TABLE,
+    USER_SESSIONS_TABLE,
 )
 
 # Derived from the live enums rather than retyped, exactly as the review DDL
@@ -140,11 +146,88 @@ CREATE TABLE IF NOT EXISTS {REVIEW_QUEUES_TABLE} (
 """.strip()
 
 
+# One row per user, keyed by the user. The primary key is what makes "one
+# active password credential per user" structural rather than a rule someone
+# has to remember: a second verifier for the same person is unrepresentable.
+#
+# The table is separate from ``users`` on purpose. Identity metadata is read
+# constantly -- to render a display name, to check a status -- and credential
+# material should not be carried along by every one of those reads. Splitting
+# them also means a future second factor or a different credential type is a
+# new table rather than more nullable columns on ``users``.
+#
+# ``password_hash`` holds argon2-cffi's encoded string verbatim: the variant,
+# the version, the cost parameters, the salt and the digest are all inside it.
+# There are deliberately no salt or parameter columns. Storing those separately
+# would mean this schema and the library could disagree about what a stored
+# verifier means, and the failure mode of that disagreement is either "nothing
+# verifies" or "everything does".
+#
+# ON DELETE RESTRICT, like every other reference in this schema: a credential
+# must never outlive the user it belongs to, and deletion is not a supported
+# operation anywhere in this database.
+CREATE_PASSWORD_CREDENTIALS = f"""
+CREATE TABLE IF NOT EXISTS {PASSWORD_CREDENTIALS_TABLE} (
+    user_id TEXT PRIMARY KEY NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    updated_at_utc TEXT NOT NULL,
+    CHECK (updated_at_utc >= created_at_utc),
+    FOREIGN KEY (user_id)
+        REFERENCES {USERS_TABLE} (user_id) ON DELETE RESTRICT
+)
+""".strip()
+
+
+# A session row. The bearer token itself is **not** here and never will be:
+# ``token_hash`` is a SHA-256 digest of it, so a stolen copy of this database
+# yields no usable credential. The UNIQUE constraint doubles as the lookup
+# index, which is the only access path -- a caller presents a token, it is
+# hashed, and this is what the digest is matched against.
+#
+# There is no organization_id and no role column, and that absence is the
+# design. A role captured at login would stay in force until the session ended,
+# so removing someone's access could take up to eight hours to mean anything.
+# Authorization reads current membership at the moment of the request; a
+# session answers only "which user is this".
+#
+# The three CHECK constraints encode the invariants the service enforces, so a
+# row that violated them could not be written even by code that skipped the
+# service. They compare timestamps as strings, which is exact here because
+# every stamp this project writes goes through one formatter that produces a
+# fixed-width, Z-suffixed, second-resolution value -- so lexicographic order is
+# chronological order. See ``identity.clock``.
+#
+# ``idle_expires_at_utc <= absolute_expires_at_utc`` is the one worth naming:
+# it is what stops a renewal near the end of a session's life from pushing the
+# idle window past the absolute cap, which would let activity extend a session
+# beyond the bound that exists precisely to be unextendable.
+CREATE_USER_SESSIONS = f"""
+CREATE TABLE IF NOT EXISTS {USER_SESSIONS_TABLE} (
+    session_id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at_utc TEXT NOT NULL,
+    last_activity_at_utc TEXT NOT NULL,
+    idle_expires_at_utc TEXT NOT NULL,
+    absolute_expires_at_utc TEXT NOT NULL,
+    revoked_at_utc TEXT NULL,
+    CHECK (absolute_expires_at_utc > created_at_utc),
+    CHECK (idle_expires_at_utc <= absolute_expires_at_utc),
+    CHECK (last_activity_at_utc >= created_at_utc),
+    FOREIGN KEY (user_id)
+        REFERENCES {USERS_TABLE} (user_id) ON DELETE RESTRICT
+)
+""".strip()
+
+
 IDENTITY_TABLE_STATEMENTS: tuple[str, ...] = (
     CREATE_ORGANIZATIONS,
     CREATE_USERS,
     CREATE_ORGANIZATION_MEMBERSHIPS,
     CREATE_REVIEW_QUEUES,
+    CREATE_PASSWORD_CREDENTIALS,
+    CREATE_USER_SESSIONS,
 )
 
 
@@ -158,4 +241,8 @@ IDENTITY_INDEX_STATEMENTS: tuple[str, ...] = (
     # verified membership into a tenant scope.
     f"CREATE INDEX IF NOT EXISTS ix_review_queues_organization "
     f"ON {REVIEW_QUEUES_TABLE} (organization_id)",
+    # "Which sessions belong to this user" -- what a future password change or
+    # account suspension needs in order to end them all. The token lookup needs
+    # no index of its own: the UNIQUE constraint on token_hash already is one.
+    f"CREATE INDEX IF NOT EXISTS ix_user_sessions_user ON {USER_SESSIONS_TABLE} (user_id)",
 )
