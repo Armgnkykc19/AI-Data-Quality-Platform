@@ -152,6 +152,10 @@ def test_error_codes_are_api_owned_tokens() -> None:
     """
     assert [code.value for code in ErrorCode] == [
         "INVALID_REQUEST",
+        # Sprint 13 Phase D. One token for every way authentication can fail,
+        # because the caller must not be able to tell them apart.
+        "UNAUTHENTICATED",
+        "FORBIDDEN",
         "NOT_FOUND",
         "METHOD_NOT_ALLOWED",
         "INTERNAL_ERROR",
@@ -171,8 +175,10 @@ def test_error_codes_are_api_owned_tokens() -> None:
 def test_no_later_phase_error_code_exists_yet() -> None:
     """A code with no route that can produce it is a branch no test can reach.
 
-    Registration, semantic-generation and authentication codes arrive with the
-    endpoints that raise them, in the phases and sprints that own them.
+    ``UNAUTHENTICATED`` and ``FORBIDDEN`` left this list in Sprint 13 Phase D,
+    when the authentication endpoints that raise them arrived. The rest are
+    still premature: registration and semantic generation have no HTTP surface,
+    and tenant authorization codes belong to the phase that enforces it.
     """
     declared = {code.value for code in ErrorCode}
 
@@ -181,8 +187,8 @@ def test_no_later_phase_error_code_exists_yet() -> None:
         "DUPLICATE_CASE_REGISTRATION",
         "SEMANTIC_PROVIDER_UNAVAILABLE",
         "SEMANTIC_BUDGET_EXCEEDED",
-        "UNAUTHENTICATED",
-        "FORBIDDEN",
+        "ORGANIZATION_NOT_FOUND",
+        "INSUFFICIENT_ROLE",
     ):
         assert premature not in declared
 
@@ -283,9 +289,20 @@ def business_routes() -> list[tuple[str, set[str]]]:
     )
 
 
-def test_the_published_surface_is_exactly_four_reads_and_one_write() -> None:
-    """Pinned whole, so a new endpoint cannot ship without editing this list."""
+def test_the_published_surface_is_pinned_whole() -> None:
+    """Pinned whole, so a new endpoint cannot ship without editing this list.
+
+    Sprint 13 Phase D added four authentication operations and changed nothing
+    about the review ones. The review routes are deliberately still
+    unauthenticated: adding identity to them without tenant authorization would
+    produce a surface where a signed-in user can read every tenant's queue,
+    which is worse than an honestly unauthenticated one.
+    """
     assert business_routes() == [
+        ("/api/v1/auth/login", {"POST"}),
+        ("/api/v1/auth/logout", {"POST"}),
+        ("/api/v1/auth/session", {"GET"}),
+        ("/api/v1/auth/session/continue", {"POST"}),
         ("/api/v1/review-cases", {"GET"}),
         ("/api/v1/review-cases/{review_case_id}", {"GET"}),
         ("/api/v1/review-cases/{review_case_id}/events", {"GET"}),
@@ -298,9 +315,20 @@ def test_health_is_still_published() -> None:
     assert "/health" in published_paths()
 
 
-def test_resolution_is_the_only_write_endpoint() -> None:
-    """One write, and it is the one that goes through the Sprint 08 authority."""
-    writes = [(path, methods) for path, methods in business_routes() if methods != {"GET"}]
+def test_resolution_is_the_only_review_write_endpoint() -> None:
+    """One write against review data, and it goes through the Sprint 08 authority.
+
+    The authentication writes are excluded by path rather than forgotten: they
+    change a session, never a review case, and none of them can reach the
+    review queue at all. Narrowing the assertion to ``/review-cases`` keeps it
+    saying what it always said -- that a second way to alter a human decision
+    cannot appear unnoticed.
+    """
+    writes = [
+        (path, methods)
+        for path, methods in business_routes()
+        if methods != {"GET"} and "/review-cases" in path
+    ]
 
     assert writes == [("/api/v1/review-cases/{review_case_id}/resolve", {"POST"})]
 

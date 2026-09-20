@@ -23,6 +23,7 @@ __all__ = [
     "CredentialRepository",
     "SessionRepository",
     "UserLookup",
+    "UserProvisioningRepository",
     "UserReader",
 ]
 
@@ -69,6 +70,24 @@ class CredentialRepository(Protocol):
         Must refuse a credential for a user that is not stored, so a verifier
         can never belong to nobody.
         """
+        ...
+
+
+class UserProvisioningRepository(Protocol):
+    """Creating a user and their password as one unit.
+
+    Separate from ``CredentialRepository`` because the guarantee is different:
+    this one is about atomicity across two tables. An implementation must write
+    both rows in a single transaction, so a failure can never leave a user who
+    exists but cannot log in -- a state nothing errors on and nobody can see.
+    """
+
+    def create_user_with_credential(
+        self,
+        user: User,
+        credential: PasswordCredential,
+    ) -> User:
+        """Store both, or neither. Refuses a duplicate login handle."""
         ...
 
 

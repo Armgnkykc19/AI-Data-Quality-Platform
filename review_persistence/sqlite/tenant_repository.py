@@ -242,26 +242,39 @@ class SqliteTenantRepository:
             )
         )
         with self._database.transaction() as connection:
-            try:
-                connection.execute(
-                    _insert(USERS_TABLE, _USER_COLUMNS),
-                    (
-                        stored.user_id,
-                        stored.email,
-                        stored.normalized_email,
-                        stored.display_name,
-                        stored.status.value,
-                        stored.created_at_utc,
-                    ),
-                )
-            except sqlite3.IntegrityError as exc:
-                # The address is not echoed. A duplicate-account error that
-                # quotes the address is a membership oracle the moment this
-                # path is reachable by anyone but an operator.
-                raise DuplicateIdentityError(
-                    f"A user with id {stored.user_id!r} or that login handle already exists."
-                ) from exc
+            self.insert_user_in(connection, stored)
         return stored
+
+    @staticmethod
+    def insert_user_in(connection: sqlite3.Connection, user: User) -> None:
+        """Insert one user inside a transaction the caller already opened.
+
+        Separated from :meth:`create_user` so a caller that must write a user
+        and something else atomically -- operator provisioning, which creates a
+        user and a password credential together -- can do so in one
+        transaction. ``BEGIN IMMEDIATE`` cannot nest, so the alternative would
+        be a second copy of this INSERT somewhere else, and two copies of a
+        statement are two statements that will eventually disagree.
+        """
+        try:
+            connection.execute(
+                _insert(USERS_TABLE, _USER_COLUMNS),
+                (
+                    user.user_id,
+                    user.email,
+                    user.normalized_email,
+                    user.display_name,
+                    user.status.value,
+                    user.created_at_utc,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            # The address is not echoed. A duplicate-account error that quotes
+            # the address is a membership oracle the moment this path is
+            # reachable by anyone but an operator.
+            raise DuplicateIdentityError(
+                f"A user with id {user.user_id!r} or that login handle already exists."
+            ) from exc
 
     def get_user(self, user_id: str) -> User | None:
         row = (

@@ -96,7 +96,7 @@ Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complet
 
 ## Sprint 13 (in progress)
 
-Sprint 13 adds authentication, organizations and tenant isolation. **Only the backend foundation exists so far.** There is no login endpoint, no cookie, no authenticated HTTP route and no capability enforcement — the API remains the unauthenticated localhost tool Sprint 11 and 12 describe, and nothing in the browser has changed. What exists is the tenant ownership graph and the authentication core beneath it, built and tested before anything is reachable over a socket.
+Sprint 13 adds authentication, organizations and tenant isolation. **Identity works; authorization does not yet.** A person can sign in over HTTP and hold a real session, but no review endpoint checks who they are and nothing in the browser has changed. What exists is the tenant ownership graph, the authentication core beneath it, and the HTTP surface on top of it — each built and proven before the next was written.
 
 What does exist is the ownership graph everything above it will hang from:
 
@@ -125,7 +125,41 @@ Sessions are **opaque server-side tokens**, not JWTs. A token is 256 random bits
 
 The timing policy is fixed server-side: **60 minutes idle**, **8 hours absolute**, with a 55-minute threshold the frontend will later use to warn. Activity extends the idle window and never the absolute one — that bound exists precisely so a stolen token cannot be kept alive by using it.
 
-Still not implemented, and deliberately: login/logout/session HTTP endpoints, cookies, CSRF handling, frontend auth, "remember me", public registration, password reset, and email verification.
+### Signing in
+
+Authentication is now reachable over HTTP. Four endpoints, and nothing else:
+
+```
+POST /api/v1/auth/login             credentials in, session cookie out
+GET  /api/v1/auth/session           who is signed in, and how long is left
+POST /api/v1/auth/session/continue  the explicit "I am still here"
+POST /api/v1/auth/logout            revoke the session, clear the cookie
+```
+
+The session token travels in **one opaque cookie** and appears in no response body. It is `HttpOnly` so script cannot read it, `SameSite=Strict` so a cross-site request does not carry it, scoped to `Path=/` with no `Domain`, and has no `Max-Age` — it is gone when the browser closes, whatever the server-side session still allows.
+
+**Every authentication failure answers the same `401 UNAUTHENTICATED`.** An unknown address, a wrong password, a disabled account, a missing credential, a revoked session, an idle-expired session, an absolutely-expired one, and a session whose owner was just disabled are one public answer. Telling them apart would say whether an account exists, whether it is worth pursuing, or whether an operator had noticed something.
+
+Unsafe requests — login, logout, continue — are refused unless they carry an `Origin` the configuration lists, matched whole. A **missing** `Origin` is refused too: every browser sends it on a POST, so its absence means the caller is not the browser this API is built for. That is the CSRF control alongside `SameSite`; no CORS middleware exists and none is needed, because the browser reaches the API same-origin through the Vite proxy.
+
+Any successful authenticated request counts as activity and pushes the idle window forward, so a reviewer working steadily is never signed out for failing to press a button. Nothing extends the eight-hour absolute bound.
+
+### Creating a login
+
+```bash
+python scripts/manage_human_review.py create-user \
+    --email reviewer@example.com --display-name "Reviewer One"
+Password:
+Confirm password:
+```
+
+There is no `--password` and there will not be: an argument is written to shell history and visible in the process list. The account is created together with its password in one transaction, so a failure cannot leave a user who exists but cannot sign in. It gets no organization, no membership and no role — granting access is a separate decision.
+
+Cookie and origin policy lives in `configs/auth_http.yaml`. `session_cookie_secure` defaults to **true**; the committed file sets it to false for the documented local HTTP runtime, and the loader refuses that setting unless every allowed origin is loopback.
+
+Still not implemented, and deliberately: authentication on the review routes, tenant-scoped URLs, role enforcement, frontend login, "remember me", public registration, password reset, email verification, and a double-submit CSRF token.
+
+**The review routes are still unauthenticated.** That is a phase boundary rather than an oversight: adding identity to them before tenant authorization exists would produce a surface where any signed-in user reads every tenant's queue, which is worse than an honestly unauthenticated one. They remain a localhost tool until the phase that scopes them.
 
 ### Database schema 2.0.0
 

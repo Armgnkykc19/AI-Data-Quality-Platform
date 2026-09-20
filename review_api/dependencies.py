@@ -48,11 +48,18 @@ from typing import TypeVar
 from fastapi import FastAPI
 from starlette.requests import Request
 
+from identity.authentication import AuthenticationService
+from identity.login import LoginService
+from identity.passwords import Argon2idPasswordHasher
+from identity.session_service import SessionService
+from review_api.auth_config import AuthHttpConfig, load_auth_http_config
 from review_application import ReviewCaseRepository, ReviewQueue, ReviewQueueService
 from review_persistence import load_review_persistence_config
 from review_persistence.sqlite import (
     ReviewDatabase,
+    SqliteCredentialRepository,
     SqliteReviewCaseRepository,
+    SqliteSessionRepository,
     SqliteTenantRepository,
     open_review_database,
 )
@@ -70,6 +77,7 @@ async def production_lifespan(app: FastAPI) -> AsyncIterator[None]:
     from another directory.
     """
     config = load_review_persistence_config()
+    auth_config = load_auth_http_config()
     database = open_review_database(config)
     try:
         repository = SqliteReviewCaseRepository(
@@ -78,13 +86,46 @@ async def production_lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         app.state.repository = repository
         app.state.service = ReviewQueueService(repository)
+        app.state.auth_config = auth_config
+        _wire_authentication(app, database)
         yield
     finally:
         # Cleared before closing so a shutdown that races a request cannot hand
         # out a repository over a connection that is already gone.
         app.state.repository = None
         app.state.service = None
+        app.state.login_service = None
+        app.state.session_service = None
         database.close()
+
+
+def _wire_authentication(app: FastAPI, database: ReviewDatabase) -> None:
+    """Build the authentication services over the one open database.
+
+    Every repository here shares the single ``ReviewDatabase`` the lifespan
+    opened. That is not an optimisation: a ``sqlite3`` connection is legal only
+    on the thread that created it, and a second connection to the same file
+    would give a session write and a review write two different views of it.
+
+    The hasher is constructed once, at startup, with no arguments -- so it uses
+    argon2-cffi's own parameters rather than anything this project pinned. It
+    is stateless and safe to share; building one per request would also rebuild
+    the cached dummy verifier that the enumeration defence depends on being
+    computed once.
+    """
+    users = SqliteTenantRepository(database)
+    hasher = Argon2idPasswordHasher()
+    sessions = SessionService(
+        sessions=SqliteSessionRepository(database),
+        users=users,
+    )
+    authentication = AuthenticationService(
+        users=users,
+        credentials=SqliteCredentialRepository(database),
+        hasher=hasher,
+    )
+    app.state.session_service = sessions
+    app.state.login_service = LoginService(authentication=authentication, sessions=sessions)
 
 
 def resolve_sole_review_queue(database: ReviewDatabase) -> ReviewQueue:
@@ -164,6 +205,27 @@ def _require_wired(component: _T | None, name: str) -> _T:
 def get_repository(request: Request) -> ReviewCaseRepository:
     """The queue's storage, typed as the Protocol and never as the SQLite class."""
     return _require_wired(request.app.state.repository, "review case repository")
+
+
+def get_auth_config(request: Request) -> AuthHttpConfig:
+    """The cookie and origin policy this application was built with.
+
+    Never a default reached at request time. An application nobody configured
+    fails loudly rather than falling back to something permissive -- a fallback
+    here would mean an unconfigured deployment silently accepting every origin
+    or dropping ``Secure`` from the cookie.
+    """
+    return _require_wired(request.app.state.auth_config, "authentication configuration")
+
+
+def get_login_service(request: Request) -> LoginService:
+    """The Phase C login orchestration: verify a password, then start a session."""
+    return _require_wired(request.app.state.login_service, "login service")
+
+
+def get_session_service(request: Request) -> SessionService:
+    """The Phase C session lifecycle: resolve, renew, revoke."""
+    return _require_wired(request.app.state.session_service, "session service")
 
 
 def get_service(request: Request) -> ReviewQueueService:

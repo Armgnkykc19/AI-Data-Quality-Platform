@@ -12,6 +12,10 @@ Nothing here parses it, splits it, or knows what an Argon2 parameter is.
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Mapping
+from typing import Any
+
 from identity.credentials import PasswordCredential
 from identity.errors import IdentityNotFoundError
 from review_persistence.identity_schema import PASSWORD_CREDENTIALS_TABLE, USERS_TABLE
@@ -78,16 +82,7 @@ class SqliteCredentialRepository:
                     f"User {credential.user_id} is not stored; a password credential "
                     "cannot belong to nobody."
                 )
-            connection.execute(
-                _UPSERT,
-                (
-                    credential.user_id,
-                    credential.password_hash,
-                    credential.created_at_utc,
-                    credential.updated_at_utc,
-                ),
-            )
-            row = connection.execute(_SELECT, (credential.user_id,)).fetchone()
+            row = self.upsert_credential_in(connection, credential)
 
         return PasswordCredential(
             user_id=str(row["user_id"]),
@@ -95,3 +90,32 @@ class SqliteCredentialRepository:
             created_at_utc=str(row["created_at_utc"]),
             updated_at_utc=str(row["updated_at_utc"]),
         )
+
+    @staticmethod
+    def upsert_credential_in(
+        connection: sqlite3.Connection,
+        credential: PasswordCredential,
+    ) -> Mapping[str, Any]:
+        """Write the verifier inside a transaction the caller already opened.
+
+        Exists so operator provisioning can create a user and their credential
+        in one transaction: a user row without a credential, or a credential
+        without its user, is a state no failure should be able to leave behind.
+
+        The user's existence is the caller's check here, because the caller is
+        typically the statement that just created them -- and the foreign key
+        is the enforcement either way.
+
+        Returns the stored row rather than the argument, since ON CONFLICT
+        preserves ``created_at_utc`` and the caller should see what landed.
+        """
+        connection.execute(
+            _UPSERT,
+            (
+                credential.user_id,
+                credential.password_hash,
+                credential.created_at_utc,
+                credential.updated_at_utc,
+            ),
+        )
+        return connection.execute(_SELECT, (credential.user_id,)).fetchone()

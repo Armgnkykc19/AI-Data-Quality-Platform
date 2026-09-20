@@ -17,6 +17,7 @@ projects is what production actually produces.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
@@ -36,6 +37,7 @@ from human_review.workflow import ReviewWorkflow
 from review_api import create_app
 from review_application import PersistedCase, ReviewEvent, ReviewResolutionResult
 from tests.human_review.conftest import make_review_resolution, match_authorization_kwargs
+from tests.review_api.auth_fixtures import AuthFixture, build_auth_fixture
 
 # Values that could not plausibly appear in this API's own vocabulary, so a test
 # can assert they are absent from a response and mean it.
@@ -283,3 +285,28 @@ def resolution_result(
 def service_client(service: object) -> TestClient:
     """A client over an app wired to the given service and no repository."""
     return TestClient(create_app(service=service), raise_server_exceptions=False)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------
+# Sprint 13 authentication
+# --------------------------------------------------------------------------
+#
+# These two build something the rest of this file deliberately does not: a real
+# SQLite database, real Argon2id hashing and a real session service. The
+# machinery lives in ``auth_fixtures`` -- it is long enough to want its own
+# docstring -- and only the fixture wrappers are here, because pytest discovers
+# fixtures in conftest files.
+
+
+@pytest.fixture
+def auth(tmp_path: Path) -> Iterator[AuthFixture]:
+    """A fully wired authenticated API over a temporary database."""
+    yield from build_auth_fixture(tmp_path)
+
+
+@pytest.fixture
+def signed_in(auth: AuthFixture) -> AuthFixture:
+    """The same, with a provisioned user already logged in."""
+    auth.create_user()
+    auth.login_as()
+    return auth

@@ -69,12 +69,22 @@ def test_no_registration_operation_is_published(schema: dict) -> None:
     assert not [path for path, _ in operation_ids(schema) if "register" in path]
 
 
-# The complete Sprint 11 HTTP surface. Registering a trusted workflow is an
-# operator action -- ``manage_human_review.py ... --register-review-queue`` --
-# and must never become a request anyone can send: the context it writes is what
-# MATCH authorization is evaluated against, and this API has no authentication.
-SPRINT_11_OPERATIONS = {
+# The complete published HTTP surface.
+#
+# Registering a trusted workflow is an operator action --
+# ``manage_human_review.py ... --register-review-queue`` -- and must never
+# become a request anyone can send: the context it writes is what MATCH
+# authorization is evaluated against.
+#
+# Creating a user is an operator action for the same kind of reason. There is no
+# public registration and no password-reset or password-change endpoint; an
+# account exists because an operator made one.
+PUBLISHED_OPERATIONS = {
     ("/health", "GET"),
+    ("/api/v1/auth/login", "POST"),
+    ("/api/v1/auth/logout", "POST"),
+    ("/api/v1/auth/session", "GET"),
+    ("/api/v1/auth/session/continue", "POST"),
     ("/api/v1/review-cases", "GET"),
     ("/api/v1/review-cases/{review_case_id}", "GET"),
     ("/api/v1/review-cases/{review_case_id}/events", "GET"),
@@ -83,9 +93,24 @@ SPRINT_11_OPERATIONS = {
 }
 
 
-def test_the_published_surface_is_exactly_the_sprint_11_operations(schema: dict) -> None:
+def test_the_published_surface_is_exactly_the_expected_operations(schema: dict) -> None:
     """A set comparison, so an added route fails here rather than shipping."""
-    assert operation_ids(schema) == SPRINT_11_OPERATIONS
+    assert operation_ids(schema) == PUBLISHED_OPERATIONS
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/v1/auth/register", "/api/v1/auth/password", "/api/v1/auth/password/reset"],
+)
+def test_no_self_service_credential_operation_is_published(schema: dict, path: str) -> None:
+    """Registration, password change and reset are all absent, deliberately.
+
+    Each is a credential-bearing flow with its own abuse surface -- enumeration
+    through a signup form, an emailed reset token, a change endpoint reachable
+    with a stolen cookie -- and none of them is needed by an internal tool whose
+    accounts an operator creates.
+    """
+    assert path not in schema["paths"]
 
 
 @pytest.mark.parametrize(
@@ -118,8 +143,13 @@ def test_no_published_write_reaches_semantic_generation(schema: dict, token: str
     assert not [path for path in writes if token in path.lower()]
 
 
-def test_resolution_is_the_only_published_write(schema: dict) -> None:
-    writes = {(path, method) for path, method in operation_ids(schema) if method != "GET"}
+def test_resolution_is_the_only_published_review_write(schema: dict) -> None:
+    """Authentication writes change a session; they cannot reach review data."""
+    writes = {
+        (path, method)
+        for path, method in operation_ids(schema)
+        if method != "GET" and "/review-cases" in path
+    }
 
     assert writes == {("/api/v1/review-cases/{review_case_id}/resolve", "POST")}
 
@@ -271,3 +301,105 @@ def test_no_published_schema_advertises_persistence_material(schema: dict) -> No
 def test_the_schema_does_not_advertise_a_database_schema_version(schema: dict) -> None:
     """``schema_version`` is database metadata on stored events and cases."""
     assert "schema_version" not in json.dumps(schema)
+
+
+# --------------------------------------------------------------------------
+# The published authentication contract
+# --------------------------------------------------------------------------
+
+
+def response_schema_names(schema: dict) -> set[str]:
+    """Every component schema reachable from a published *response*.
+
+    Walked from the responses rather than listed, so a model that becomes a
+    response later is covered without anyone remembering to add it here.
+    """
+    components = schema.get("components", {}).get("schemas", {})
+    seen: set[str] = set()
+
+    def visit(node: object) -> None:
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+                name = ref.rsplit("/", 1)[-1]
+                if name not in seen:
+                    seen.add(name)
+                    visit(components.get(name, {}))
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    for operations in schema["paths"].values():
+        for operation in operations.values():
+            visit(operation.get("responses", {}))
+    return seen
+
+
+def test_no_response_schema_publishes_a_secret(schema: dict) -> None:
+    """A password may be an input. It may never be an output.
+
+    Walked recursively because a secret does not have to be a top-level field
+    to be published -- one nested model is enough.
+    """
+    components = schema["components"]["schemas"]
+
+    for name in response_schema_names(schema):
+        properties = set(components.get(name, {}).get("properties", {}))
+        offenders = {
+            field
+            for field in properties
+            if any(
+                token in field.lower()
+                for token in ("password", "token", "secret", "credential", "hash")
+            )
+        }
+        assert not offenders, f"{name} publishes {offenders}"
+
+
+def test_password_appears_only_in_the_login_request(schema: dict) -> None:
+    components = schema["components"]["schemas"]
+
+    carrying = {
+        name
+        for name, model in components.items()
+        if any("password" in field.lower() for field in model.get("properties", {}))
+    }
+
+    assert carrying == {"LoginRequest"}
+
+
+def test_the_session_response_publishes_no_tenant_or_role(schema: dict) -> None:
+    """A session establishes identity; authorization is read fresh each request.
+
+    Publishing a role would invite a client to cache it, and a cached role is a
+    role that stays in force after an operator removes it.
+    """
+    components = schema["components"]["schemas"]
+    published = {
+        field
+        for name in response_schema_names(schema)
+        for field in components.get(name, {}).get("properties", {})
+    }
+
+    for forbidden in ("organization", "queue", "role", "membership", "session_id", "email"):
+        assert not [field for field in published if forbidden in field.lower()], forbidden
+
+
+def test_the_login_request_forbids_extra_properties(schema: dict) -> None:
+    """So a caller cannot smuggle a field into the one request that
+    establishes identity."""
+    assert schema["components"]["schemas"]["LoginRequest"]["additionalProperties"] is False
+
+
+def test_the_session_policy_travels_with_the_session(schema: dict) -> None:
+    """A frontend reads the thresholds rather than hard-coding 55 and 60.
+
+    A browser that computed its own could drift from the expiry the server
+    applies and warn about a session that had already ended.
+    """
+    properties = schema["components"]["schemas"]["SessionRead"]["properties"]
+
+    for field in ("idle_timeout_seconds", "warning_after_seconds", "absolute_timeout_seconds"):
+        assert field in properties

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from collections.abc import Sequence
@@ -24,8 +25,14 @@ from human_review.reporting import (  # noqa: E402
     write_review_reports,
 )
 from human_review.workflow import ReviewWorkflow  # noqa: E402
-from identity.errors import IdentityError, IdentityNotFoundError  # noqa: E402
+from identity.errors import (  # noqa: E402
+    IdentityError,
+    IdentityNotFoundError,
+    IdentityValidationError,
+)
 from identity.models import Organization  # noqa: E402
+from identity.passwords import Argon2idPasswordHasher  # noqa: E402
+from identity.provisioning import UserProvisioningService  # noqa: E402
 from ingestion.config import load_ingestion_config  # noqa: E402
 from ingestion.errors import IngestionError  # noqa: E402
 from ingestion.parser import parse_file  # noqa: E402
@@ -46,6 +53,7 @@ from review_persistence.sqlite import (  # noqa: E402
     ReviewDatabase,
     SqliteReviewCaseRepository,
     SqliteTenantRepository,
+    SqliteUserProvisioningRepository,
     open_review_database,
 )
 
@@ -98,6 +106,17 @@ def parse_args() -> argparse.Namespace:
         "list-organizations", help="List the organizations in the review database."
     )
     _add_review_db_argument(list_organizations_parser)
+
+    # A login-capable person. Deliberately no --password: an argument is
+    # visible in shell history and in the process list of every other user on
+    # the machine, which are two places a credential must never be.
+    create_user_parser = subparsers.add_parser(
+        "create-user",
+        help="Create a user who can sign in. Prompts for the password.",
+    )
+    create_user_parser.add_argument("--email", type=str, required=True)
+    create_user_parser.add_argument("--display-name", type=str, required=True)
+    _add_review_db_argument(create_user_parser)
 
     create_queue_parser = subparsers.add_parser(
         "create-review-queue",
@@ -368,6 +387,60 @@ def _list_organizations(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _prompt_for_password() -> str | None:
+    """Read a password twice without echoing it, or return None on mismatch.
+
+    ``getpass`` rather than ``input``: it keeps the characters off the screen
+    and out of the terminal's scrollback, which is where a shoulder-surfer and
+    a screen recording both look.
+
+    Confirmation is required because this is the only chance to get it right --
+    there is no reset flow, so a typo would produce an account nobody can sign
+    into and no one could diagnose. On mismatch nothing is written; the
+    operator runs the command again.
+
+    Neither value is echoed, logged, or placed in an error message on any path.
+    """
+    password = getpass.getpass("Password: ")
+    confirmation = getpass.getpass("Confirm password: ")
+    if password != confirmation:
+        return None
+    return password
+
+
+def _create_user(args: argparse.Namespace) -> int:
+    """Create a user and their first password, atomically.
+
+    The password is read before the database is opened, so an operator who
+    mistypes the confirmation never touches storage at all.
+    """
+    password = _prompt_for_password()
+    if password is None:
+        print("The passwords did not match. No user was created.")
+        return EXIT_USAGE
+
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        service = UserProvisioningService(
+            provisioning=SqliteUserProvisioningRepository(database),
+            hasher=Argon2idPasswordHasher(),
+        )
+        user = service.provision_user(
+            email=args.email,
+            display_name=args.display_name,
+            password=password,
+        )
+    finally:
+        database.close()
+
+    # The identifier and the address the operator typed. Never the password,
+    # never the hash, and never anything derived from either.
+    print(f"Database: {database_path}")
+    print(f"Created user {user.email} ({user.user_id}).")
+    print("This user has no organization membership yet.")
+    return EXIT_OK
+
+
 def _create_review_queue(args: argparse.Namespace) -> int:
     database, database_path = _open_review_queue(args.review_db)
     try:
@@ -426,6 +499,8 @@ def main() -> int:
             return _create_organization(args)
         if args.command == "list-organizations":
             return _list_organizations(args)
+        if args.command == "create-user":
+            return _create_user(args)
         if args.command == "create-review-queue":
             return _create_review_queue(args)
 
@@ -515,6 +590,11 @@ def main() -> int:
     except HumanReviewError as exc:
         print(f"Human review rejected: {exc}")
         return EXIT_POLICY
+    except IdentityValidationError as exc:
+        # A rejected password or a malformed address. The message names the
+        # rule that was broken and never the value that broke it.
+        print(f"Invalid input: {exc}")
+        return EXIT_USAGE
     except IdentityError as exc:
         # A tenant problem, not a review problem: an unknown slug, a duplicate
         # organization, a queue name already taken. Nothing was written.

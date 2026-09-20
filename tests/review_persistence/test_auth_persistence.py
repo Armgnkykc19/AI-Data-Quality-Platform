@@ -330,10 +330,21 @@ def test_an_unknown_user_has_no_credential(credentials: SqliteCredentialReposito
 
 
 def test_the_credential_store_offers_no_way_to_enumerate_or_delete() -> None:
-    """A store whose contents can be listed is a store that will be listed."""
+    """A store whose contents can be listed is a store that will be listed.
+
+    Asserted as a property of the method names rather than as an exact set, so
+    a legitimate addition -- the connection-level helper that lets operator
+    provisioning write a user and a credential in one transaction -- does not
+    fail a test whose point is that nothing here can list or remove a verifier.
+    """
     methods = {name for name in dir(SqliteCredentialRepository) if not name.startswith("_")}
 
-    assert methods == {"get_credential", "set_credential"}
+    assert not {name for name in methods if any(token in name for token in ("list", "all"))}
+    assert not {
+        name for name in methods if any(token in name for token in ("delete", "remove", "drop"))
+    }
+    assert not {name for name in methods if "search" in name or "find" in name}
+    assert {"get_credential", "set_credential"} <= methods
 
 
 # --------------------------------------------------------------------------

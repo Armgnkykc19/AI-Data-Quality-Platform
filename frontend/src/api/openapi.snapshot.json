@@ -1,6 +1,26 @@
 {
   "components": {
     "schemas": {
+      "AuthenticatedUserRead": {
+        "additionalProperties": false,
+        "description": "Who is authenticated. Two fields, and neither is a secret or an address.",
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "user_id": {
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "display_name"
+        ],
+        "title": "AuthenticatedUserRead",
+        "type": "object"
+      },
       "BlockingReasonRead": {
         "additionalProperties": false,
         "description": "Why these two records were ever compared.\n\n``blocking_key`` is customer-derived: for the email and phone strategies it\nis a normalized email address or a phone fragment. It is published because a\nreviewer judging whether two records are the same person needs to know what\nput them in the same bucket, and withholding it would leave the decision\nunsupported. Treat it as personal data.",
@@ -93,6 +113,32 @@
         ],
         "title": "HumanReviewDecision",
         "type": "string"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "description": "Credentials as a caller submits them.\n\n``extra=\"forbid\"`` is inherited from ``ApiRequestModel`` and is a security\ncontrol here: a caller must not be able to smuggle an extra field -- a\n``user_id``, an ``organization``, a ``role`` -- into the one request that\nestablishes identity.\n\nBoth fields are ``strict`` so Pydantic does not coerce. Without it the JSON\nnumber ``123456789012`` would become the password ``\"123456789012\"``, and a\ncaller and the server would disagree about what was actually submitted.\n\nNothing here normalizes. The email is normalized once, by the Phase B rule,\ninside ``AuthenticationService``; the password is never normalized at all,\nbecause any transformation would have to be reproduced identically forever\nagainst hashes written before it existed.",
+        "properties": {
+          "email": {
+            "description": "Login handle. Normalized server-side for lookup.",
+            "maxLength": 320,
+            "minLength": 1,
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "description": "Submitted verbatim to the password verifier.",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
       },
       "MatchDecisionType": {
         "enum": [
@@ -580,6 +626,69 @@
         "title": "SemanticSuggestionType",
         "type": "string"
       },
+      "SessionEnvelope": {
+        "additionalProperties": false,
+        "description": "The body every authentication endpoint returns.\n\nOne shape for login, for reading the current session, and for continuing\nit, so a client parses one thing. The cookie is what changes between them,\nnot the schema.",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/SessionRead"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AuthenticatedUserRead"
+          }
+        },
+        "required": [
+          "user",
+          "session"
+        ],
+        "title": "SessionEnvelope",
+        "type": "object"
+      },
+      "SessionRead": {
+        "additionalProperties": false,
+        "description": "When this session started, when it was last used, and when it ends.\n\nThe timing policy travels with the session rather than being a second\nendpoint or a frontend constant. A browser that computed its own idle\nwarning from a hard-coded 55 minutes could drift from the expiry the server\nactually applies and warn about a session that had already ended.\n\n``warning_after_seconds`` is advisory and the server never enforces it;\nthe two expiry timestamps are authoritative.",
+        "properties": {
+          "absolute_expires_at_utc": {
+            "title": "Absolute Expires At Utc",
+            "type": "string"
+          },
+          "absolute_timeout_seconds": {
+            "title": "Absolute Timeout Seconds",
+            "type": "integer"
+          },
+          "created_at_utc": {
+            "title": "Created At Utc",
+            "type": "string"
+          },
+          "idle_expires_at_utc": {
+            "title": "Idle Expires At Utc",
+            "type": "string"
+          },
+          "idle_timeout_seconds": {
+            "title": "Idle Timeout Seconds",
+            "type": "integer"
+          },
+          "last_activity_at_utc": {
+            "title": "Last Activity At Utc",
+            "type": "string"
+          },
+          "warning_after_seconds": {
+            "title": "Warning After Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "created_at_utc",
+          "last_activity_at_utc",
+          "idle_expires_at_utc",
+          "absolute_expires_at_utc",
+          "idle_timeout_seconds",
+          "warning_after_seconds",
+          "absolute_timeout_seconds"
+        ],
+        "title": "SessionRead",
+        "type": "object"
+      },
       "SupportingEvidenceRead": {
         "additionalProperties": false,
         "description": "One reason the records look like the same entity.\n\n``description`` is kept here, unlike on a blocking reason, because it holds\nno customer data: Sprint 08 builds it from the field *name* and, for fuzzy\ncomparisons, the similarity score -- which is the one number not otherwise\npresent, since ``ReviewEvidence`` keeps ``contribution`` but not ``value``.",
@@ -663,6 +772,112 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/auth/login": {
+      "post": {
+        "description": "Verify a password and start a session.\n\nThe whole of the decision is ``LoginService.login``: it normalizes the\nhandle with the Phase B rule, verifies the password against the stored\nArgon2id credential, performs a dummy verification when there is nothing to\nverify against, and only then creates a session. Nothing is written until\nthe password has been verified, so a failed attempt leaves no session row\nand no record that the handle was tried against a real account.\n\n``200`` rather than ``201``. A session is not a resource this API publishes\nat a new address -- there is no URL that identifies one, deliberately,\nbecause such a URL would be a credential.\n\nEvery failure answers ``401`` with one body. An unknown handle, a wrong\npassword, a disabled account and a user with no credential are one\n``AuthenticationFailedError`` by the time they arrive here, and this route\ndoes not learn which. A storage failure is *not* caught: it reaches the\ncatch-all as a 500, because a database that cannot be read has not rejected\nanyone's credentials and reporting it as one would send an operator to\ninvestigate the wrong thing.\n\nMembership is never consulted. A user who belongs to no organization logs\nin successfully and finds nothing to read -- an authorization outcome,\ndecided later, by code that can see the membership table.",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Exchange credentials for a session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "description": "Revoke the session if there is one, and clear the cookie either way.\n\nDeliberately **not** using the principal dependency. That dependency\nrenews activity, and touching a session on the way to ending it would be\nabsurd; it also raises on an expired or revoked session, which would turn\n\"log me out\" into a 401 for exactly the people who most want the cookie\ngone.\n\nSo logout is idempotent and says nothing. A valid session is revoked; a\nmissing, unknown, expired or already-revoked cookie is simply cleared. All\nof them answer ``200``. Reporting \"there was no session\" would tell a\ncaller whether the cookie they hold is live -- an oracle available without\nany credential at all.\n\nThe origin check still applies, because logging someone out is a state\nchange and a forced logout is a real, if minor, cross-site attack.",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "End the current session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "description": "Who is signed in, and how long this session has left.\n\nThis is an authenticated request, so it counts as activity: the principal\ndependency renewed the idle window once on the way in, and the session\nreported here is the state *after* that renewal. Returning the pre-touch\ntimestamps would tell a client its session expires earlier than the server\nnow believes, and a frontend timer built on that would warn too soon.\n\nNo ``Origin`` requirement: a GET changes nothing, and the same-origin\npolicy already keeps a cross-site caller from reading the response.\n\nNo organization, queue or role. A later phase will answer what this user\nmay reach, by reading current membership at that moment rather than\nanything captured here.",
+        "operationId": "read_session_api_v1_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Read the current session",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session/continue": {
+      "post": {
+        "description": "The explicit \"I am still here\", for the idle warning a frontend will show.\n\nExactly one renewal happens, and it is the one the principal dependency\nalready performed -- this body does not touch again. Two renewals would be\nharmless in effect but would make \"one request, one activity record\" false,\nand the difference between one and two is exactly what the activity tests\npin.\n\nIt creates no session, rotates no token, changes no user and moves no\nabsolute expiry. A session that has already hit either bound is refused\nwith the same generic ``401`` as any other unusable session: continuing is\nrenewal, not resurrection.",
+        "operationId": "continue_session_api_v1_auth_session_continue_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEnvelope"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Extend the idle window",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/review-cases": {
       "get": {
         "description": "One page of the queue, optionally filtered by status.\n\n``status`` is the ``ReviewStatus`` enum, so FastAPI matches it exactly:\n``PENDING`` is accepted and ``pending`` is a 422. Coercing case would mean\nthis layer deciding what a status token means, and there is already exactly\none answer to that in ``human_review.models``.\n\nFiltering is the repository's job and slicing is this route's. ``total``\ncounts the filtered set before the slice, so an offset past the end returns\nan empty page that still says how many cases matched.",

@@ -40,6 +40,7 @@ from review_persistence.sqlite.mapper import (
     review_case_from_payload,
     row_to_persisted_case,
 )
+from review_persistence.sqlite.provisioning_repository import SqliteUserProvisioningRepository
 from review_persistence.sqlite.review_repository import (
     SqliteReviewCaseRepository,
     StoredWorkflowContext,
@@ -66,6 +67,7 @@ __all__ = [
     "SqliteReviewCaseRepository",
     "SqliteSessionRepository",
     "SqliteTenantRepository",
+    "SqliteUserProvisioningRepository",
     "StoredWorkflowContext",
     "assert_is_sprint_09_suggestion",
     "canonical_json",

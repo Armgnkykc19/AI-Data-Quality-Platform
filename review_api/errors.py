@@ -72,6 +72,8 @@ logger = logging.getLogger(__name__)
 # renamed (UNPROCESSABLE_ENTITY -> UNPROCESSABLE_CONTENT) and the old spelling
 # now warns, so importing either one couples this module to a narrower starlette
 # range than the declared dependency allows.
+HTTP_UNAUTHORIZED = 401
+HTTP_FORBIDDEN = 403
 HTTP_NOT_FOUND = 404
 HTTP_METHOD_NOT_ALLOWED = 405
 HTTP_UNPROCESSABLE_CONTENT = 422
@@ -88,6 +90,8 @@ class ErrorCode(StrEnum):
     """
 
     INVALID_REQUEST = "INVALID_REQUEST"
+    UNAUTHENTICATED = "UNAUTHENTICATED"
+    FORBIDDEN = "FORBIDDEN"
     NOT_FOUND = "NOT_FOUND"
     METHOD_NOT_ALLOWED = "METHOD_NOT_ALLOWED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -108,6 +112,10 @@ class ErrorCode(StrEnum):
 # actionable would also be something an unauthenticated caller could learn.
 PUBLIC_MESSAGES: dict[ErrorCode, str] = {
     ErrorCode.INVALID_REQUEST: "The request was not valid.",
+    # One sentence for every way authentication can fail, because the
+    # caller must not be able to tell them apart. See UnauthenticatedError.
+    ErrorCode.UNAUTHENTICATED: "Authentication is required or the credentials are invalid.",
+    ErrorCode.FORBIDDEN: "The request was refused.",
     ErrorCode.NOT_FOUND: "The requested resource was not found.",
     ErrorCode.METHOD_NOT_ALLOWED: "The HTTP method is not allowed for this resource.",
     ErrorCode.INTERNAL_ERROR: "An internal error occurred.",
@@ -211,6 +219,40 @@ _STATUS_ERROR_CODES: dict[int, ErrorCode] = {
     HTTP_NOT_FOUND: ErrorCode.NOT_FOUND,
     HTTP_METHOD_NOT_ALLOWED: ErrorCode.METHOD_NOT_ALLOWED,
 }
+
+
+class UnauthenticatedError(Exception):
+    """The request carried no usable authenticated identity.
+
+    Owned by this layer rather than imported, because it is the *collapse
+    point*: a missing cookie, an unknown token, a malformed token, a revoked
+    session, an idle-expired session, an absolutely-expired session and a
+    session whose owner has since been disabled all become this one type, with
+    one public message.
+
+    Each of those is a distinct, typed error inside ``identity`` and stays
+    distinct there -- ``SessionExpiredError`` even carries whether idleness or
+    the absolute bound ended it. None of that reaches a caller. "Your session
+    expired" versus "that session was revoked" tells someone holding a stolen
+    token which of the two happened, and "no such account" versus "wrong
+    password" tells a prober which addresses are registered.
+
+    The ``reason`` argument is for the server log only and never for the
+    response.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class UntrustedOriginError(Exception):
+    """A state-changing request came from an origin that is not configured.
+
+    Raised before any authentication work, session mutation or revocation, so
+    a forged cross-site request cannot cost a password verification, renew a
+    session, or end one.
+    """
 
 
 class ApiError(ApiResponseModel):
@@ -382,10 +424,41 @@ async def handle_review_conflict(request: Request, exc: Exception) -> Response:
     )
 
 
+async def handle_unauthenticated(request: Request, exc: Exception) -> Response:
+    """401 with one body, whatever actually went wrong.
+
+    Logged at ``info`` with the internal reason and no traceback: a failed
+    login or an expired cookie is an ordinary outcome, not a server fault, and
+    a stack trace per attempt would bury real failures. The reason reaches the
+    log; the response never carries it.
+
+    No ``WWW-Authenticate`` header. That belongs to Basic and Bearer header
+    schemes; this is cookie authentication, and advertising a challenge a
+    browser would answer with a native dialog would be wrong.
+    """
+    reason = getattr(exc, "reason", type(exc).__name__)
+    logger.info("Unauthenticated %s %s: %s", request.method, request.url.path, reason)
+    return error_response(ErrorCode.UNAUTHENTICATED, status_code=HTTP_UNAUTHORIZED)
+
+
+async def handle_untrusted_origin(request: Request, exc: Exception) -> Response:
+    """403 for a state-changing request from an origin that is not configured.
+
+    The offending ``Origin`` is attacker-controlled, so it is neither echoed
+    into the response nor written to the log; and the configured allow-list is
+    never disclosed, because that would tell a forger exactly which origin to
+    obtain. The response says only that the request was refused.
+    """
+    logger.info("Refused untrusted origin on %s %s", request.method, request.url.path)
+    return error_response(ErrorCode.FORBIDDEN, status_code=HTTP_FORBIDDEN)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Install every handler this API answers with."""
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, handle_http_exception)
+    app.add_exception_handler(UnauthenticatedError, handle_unauthenticated)
+    app.add_exception_handler(UntrustedOriginError, handle_untrusted_origin)
     for exception_type, status_code, code in DOMAIN_ERROR_MAPPINGS:
         app.add_exception_handler(exception_type, make_domain_handler(status_code, code))
     # Registered on its own because it is the one mapping that returns details.
