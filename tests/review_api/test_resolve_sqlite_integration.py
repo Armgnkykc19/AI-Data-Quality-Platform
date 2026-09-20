@@ -46,6 +46,7 @@ from tests.human_review.conftest import (
     make_triangle_review_resolution,
 )
 from tests.review_api.conftest import NOW, records_by_id
+from tests.review_persistence.conftest import bound_repository
 from tests.review_persistence.semantic_fixtures import make_suggestion
 
 BASE_URL = "/api/v1/review-cases"
@@ -79,7 +80,7 @@ def open_repository(config: ReviewPersistenceConfig) -> Iterator[SqliteReviewCas
     """A short-lived repository on the calling thread, for seeding and verifying."""
     database = open_review_database(config)
     try:
-        yield SqliteReviewCaseRepository(database)
+        yield bound_repository(database)
     finally:
         database.close()
 
@@ -132,7 +133,7 @@ async def queue_lifespan(app: FastAPI, config: ReviewPersistenceConfig) -> Async
     """
     database = open_review_database(config)
     try:
-        repository = SqliteReviewCaseRepository(database)
+        repository = bound_repository(database)
         app.state.repository = repository
         app.state.service = ReviewQueueService(repository)
         yield

@@ -4,6 +4,20 @@ Structural ``typing.Protocol``, matching the ``SemanticReviewProvider`` style
 already used in Sprint 09. The contract is persistence-only: it stores
 decisions that Sprint 08 domain logic has already produced and authorized, and
 it exposes no primitive capable of creating one.
+
+**Every method addresses exactly one review queue, and none of them names it.**
+An implementation is bound to a queue when it is constructed and cannot reach
+outside it; that is why no signature below carries a ``review_queue_id``, and
+why adding one would be a mistake rather than an improvement. A per-call scope
+parameter can be omitted, defaulted, or supplied from the wrong place while
+still type-checking. A constructor binding cannot: there is no instance without
+one.
+
+The practical consequence is that tenancy is invisible here. ``review_case_id``
+is unique within a queue and not beyond it -- ``stable_review_case_id`` derives
+it from customer record identifiers, so two tenants producing the same value is
+routine -- but a caller holding one of these never has to know, because it can
+only ever see its own queue's rows.
 """
 
 from __future__ import annotations
@@ -51,6 +65,10 @@ class ReviewCaseRepository(Protocol):
         Re-registering an already stored deterministic case is a no-op. A
         stored case is never reset to PENDING and its version is never
         rewound; that would silently discard a human decision.
+
+        Both the idempotence and the conflict are properties of this queue
+        alone. An identical context in another queue is unrelated, and a
+        changed context conflicts only where one is already stored.
         """
         ...
 
@@ -69,10 +87,14 @@ class ReviewCaseRepository(Protocol):
         """Load the complete material Sprint 08 authorization requires.
 
         Must read a consistent snapshot of every case, every entity record, and
-        the reduced AUTO_MATCH resolution snapshot. Never narrow this to a
-        single case: ``assert_human_match_authorization_boundary`` projects
-        component membership transitively, and a partial load would weaken the
-        check without failing.
+        the reduced AUTO_MATCH resolution snapshot *in this queue*. Never
+        narrow this to a single case: ``assert_human_match_authorization_boundary``
+        projects component membership transitively, and a partial load would
+        weaken the check without failing.
+
+        Never widen it past the queue either. The queue is one authorization
+        graph; a bundle spanning two would let one tenant's recorded NO_MATCH
+        forbid a merge in another's data.
         """
         ...
 

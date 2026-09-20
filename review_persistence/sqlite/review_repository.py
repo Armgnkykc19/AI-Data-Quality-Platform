@@ -1,9 +1,22 @@
-"""SQLite storage for review cases, their history, and the workflow context.
+"""SQLite storage for one queue's review cases, history, and workflow context.
 
-Phase E scope: the complete Phase A ``ReviewCaseRepository`` Protocol --
-``register_workflow``, ``register_case``, ``get_case``, ``list_cases``,
-``load_workflow_bundle``, ``apply_resolution``, ``list_events``,
-``record_semantic_suggestion`` and ``list_semantic_suggestions``.
+The complete ``ReviewCaseRepository`` Protocol -- ``register_workflow``,
+``register_case``, ``get_case``, ``list_cases``, ``load_workflow_bundle``,
+``apply_resolution``, ``list_events``, ``record_semantic_suggestion`` and
+``list_semantic_suggestions`` -- implemented against one ``review_queues`` row.
+
+**Every statement is scoped to that queue.** The repository is constructed with
+a ``review_queue_id`` and holds it for its lifetime; there is no method that
+reaches outside it and no argument that could widen it. Two queues may contain
+the same deterministic ``review_case_id`` -- ``stable_review_case_id`` derives
+it from customer record identifiers, so this is ordinary rather than exotic --
+and each instance sees only its own.
+
+The Protocol itself is unchanged. That is the point of binding the queue at
+construction rather than adding a parameter to nine methods: the application
+service, the routes above it, and every test written against the contract keep
+working untouched, while the possibility of an unscoped query disappears from
+this module entirely.
 
 There is exactly one write path that can change a case status, and it is
 :meth:`apply_resolution`. It refuses anything but a ``ReviewCase`` the domain
@@ -36,12 +49,14 @@ from typing import Any
 from entity_resolution.models import EntityRecord
 from human_review.errors import ReviewCaseNotFoundError
 from human_review.models import ReviewCase, ReviewStatus, ReviewWorkflowState
+from identity.ids import assert_opaque_id
 from review_application.errors import (
     DuplicateCaseRegistrationError,
     PersistedCaseIntegrityError,
     ReviewConflictError,
     ReviewEventIntegrityError,
     ReviewPersistenceError,
+    ReviewQueueNotFoundError,
     ReviewWorkflowContextConflictError,
     ReviewWorkflowContextMissingError,
     SemanticSuggestionConflictError,
@@ -54,13 +69,14 @@ from review_application.models import (
     ReviewEvent,
     WorkflowBundle,
 )
+from review_application.queues import REVIEW_QUEUE_ID_PREFIX
+from review_persistence.identity_schema import REVIEW_QUEUES_TABLE
 from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
     REVIEW_CASE_EVENTS_TABLE,
     REVIEW_CASES_TABLE,
     REVIEW_WORKFLOW_CONTEXT_TABLE,
     SEMANTIC_SUGGESTIONS_TABLE,
-    WORKFLOW_CONTEXT_ID,
 )
 from review_persistence.sqlite.context_mapper import (
     canonical_json,
@@ -93,15 +109,22 @@ from review_persistence.sqlite.semantic_mapper import (
 )
 from semantic_review.models import SemanticSuggestion
 
+# Every statement below is queue-scoped, and the scoping is not optional. A
+# repository instance is bound to one review_queue_id for its whole lifetime
+# and interpolates nothing: the queue arrives as a bound parameter in the same
+# WHERE clause as the case id. There is no unscoped spelling of any of these,
+# so a query that forgot its tenant predicate is not something this module can
+# express.
 _SELECT_COLUMNS = ", ".join(REVIEW_CASE_COLUMNS)
 _INSERT_CASE = (
     f"INSERT INTO {REVIEW_CASES_TABLE} ({_SELECT_COLUMNS}) "
     f"VALUES ({', '.join('?' * len(REVIEW_CASE_COLUMNS))})"
 )
+_SELECT_CASES = f"SELECT {_SELECT_COLUMNS} FROM {REVIEW_CASES_TABLE} WHERE review_queue_id = ?"
 _CASE_ORDER = " ORDER BY created_at_utc, review_case_id"
 
 _CONTEXT_COLUMNS = (
-    "context_id",
+    "review_queue_id",
     "entity_records_json",
     "resolution_snapshot_json",
     "entity_resolution_config_path",
@@ -113,27 +136,40 @@ _INSERT_CONTEXT = (
     f"INSERT INTO {REVIEW_WORKFLOW_CONTEXT_TABLE} ({', '.join(_CONTEXT_COLUMNS)}) "
     f"VALUES ({', '.join('?' * len(_CONTEXT_COLUMNS))})"
 )
+# One context per queue, addressed by the queue. The 1.0.0 spelling of this
+# query was ``WHERE context_id = 1``, which could only ever describe a database
+# holding a single workflow.
 _SELECT_CONTEXT = (
     f"SELECT {', '.join(_CONTEXT_COLUMNS)} FROM {REVIEW_WORKFLOW_CONTEXT_TABLE} "
-    f"WHERE context_id = {WORKFLOW_CONTEXT_ID}"
+    "WHERE review_queue_id = ?"
 )
+
+_SELECT_QUEUE = f"SELECT review_queue_id FROM {REVIEW_QUEUES_TABLE} WHERE review_queue_id = ?"
 
 # The compare-and-swap. The version in the WHERE clause is the whole protection:
 # a reviewer whose expected_version has since been superseded matches no row, so
 # the second write affects nothing instead of overwriting the first decision.
 # version = version + 1 is computed by SQLite, so two writers cannot arrive at
 # the same next value from the same stale read.
+#
+# review_queue_id joins that predicate rather than replacing anything in it.
+# Without it, a deterministic review_case_id that exists in two queues would
+# make this statement address whichever row SQLite reached first -- a
+# cross-tenant write with no error and no trace.
 _CAS_UPDATE_CASE = (
     f"UPDATE {REVIEW_CASES_TABLE} SET "
     "status = ?, version = version + 1, case_payload_json = ?, updated_at_utc = ? "
-    "WHERE review_case_id = ? AND version = ?"
+    "WHERE review_queue_id = ? AND review_case_id = ? AND version = ?"
 )
 
 _INSERT_EVENT = (
     f"INSERT INTO {REVIEW_CASE_EVENTS_TABLE} ({', '.join(REVIEW_EVENT_INSERT_COLUMNS)}) "
     f"VALUES ({', '.join('?' * len(REVIEW_EVENT_INSERT_COLUMNS))})"
 )
-_SELECT_EVENTS = f"SELECT {', '.join(REVIEW_EVENT_SELECT_COLUMNS)} FROM {REVIEW_CASE_EVENTS_TABLE}"
+_SELECT_EVENTS = (
+    f"SELECT {', '.join(REVIEW_EVENT_SELECT_COLUMNS)} FROM {REVIEW_CASE_EVENTS_TABLE} "
+    "WHERE review_queue_id = ?"
+)
 # event_id is the AUTOINCREMENT append order, which is the only ordering that
 # stays correct when two events share a timestamp.
 _EVENT_ORDER = " ORDER BY event_id ASC"
@@ -143,7 +179,10 @@ _INSERT_SUGGESTION = (
     f"INSERT INTO {SEMANTIC_SUGGESTIONS_TABLE} ({_SUGGESTION_SELECT_COLUMNS}) "
     f"VALUES ({', '.join('?' * len(SEMANTIC_SUGGESTION_COLUMNS))})"
 )
-_SELECT_SUGGESTIONS = f"SELECT {_SUGGESTION_SELECT_COLUMNS} FROM {SEMANTIC_SUGGESTIONS_TABLE}"
+_SELECT_SUGGESTIONS = (
+    f"SELECT {_SUGGESTION_SELECT_COLUMNS} FROM {SEMANTIC_SUGGESTIONS_TABLE} "
+    "WHERE review_queue_id = ?"
+)
 # Suggestion ids are content addresses, not sequence numbers, so they carry no
 # time information. created_at_utc first gives observation order; the id breaks
 # ties between two recorded in the same second. Neither confers authority.
@@ -169,11 +208,45 @@ class StoredWorkflowContext:
 
 
 class SqliteReviewCaseRepository:
-    """Insert-if-absent storage for a review queue and its authorization context."""
+    """Storage for **one** review queue and its authorization context.
 
-    def __init__(self, database: ReviewDatabase, *, clock: Clock = _now) -> None:
+    The queue is fixed at construction and cannot be changed, read from a
+    method argument, or widened. Every statement this class issues carries it,
+    so "which tenant's data is this" is answered once, by whoever built the
+    repository, instead of by each of the nine Protocol methods separately.
+
+    That is deliberately the opposite of passing ``review_queue_id`` to each
+    method. A per-call parameter can be forgotten or supplied from the wrong
+    place and still type-check; a constructor binding cannot, because there is
+    no instance without one. It also leaves the ``ReviewCaseRepository``
+    Protocol untouched -- ``ReviewQueueService`` and every route above it speak
+    the same nine methods they always did, and gain tenant safety without
+    knowing that tenants exist.
+
+    A verified *tenant* scope -- which user, which organization, which role --
+    is a later phase's job. This class establishes the persistence half: the
+    queue binding it will sit on.
+    """
+
+    def __init__(
+        self,
+        database: ReviewDatabase,
+        *,
+        review_queue_id: str,
+        clock: Clock = _now,
+    ) -> None:
         self._database = database
+        self._review_queue_id = assert_opaque_id(
+            review_queue_id,
+            prefix=REVIEW_QUEUE_ID_PREFIX,
+            field_name="review_queue_id",
+        )
         self._clock = clock
+
+    @property
+    def review_queue_id(self) -> str:
+        """The one queue this repository can read or write. Never reassigned."""
+        return self._review_queue_id
 
     # -- workflow registration ---------------------------------------------
 
@@ -192,15 +265,24 @@ class SqliteReviewCaseRepository:
         transaction, so the database can never hold cases whose records are
         absent, nor a context describing cases that were never stored.
 
-        Idempotent. Re-registering the same workflow rewrites nothing -- not the
-        context, not its timestamps, not a single case. A stored case is
-        returned exactly as it stands, so a resolved MATCH survives a re-run of
-        deterministic case generation, which always emits the PENDING form.
+        Idempotent **within this queue**. Re-registering the same workflow
+        rewrites nothing -- not the context, not its timestamps, not a single
+        case. A stored case is returned exactly as it stands, so a resolved
+        MATCH survives a re-run of deterministic case generation, which always
+        emits the PENDING form.
 
-        Raises ``ReviewWorkflowContextConflictError`` when the stored context
-        describes a different record set or a different AUTO_MATCH snapshot,
-        and ``DuplicateCaseRegistrationError`` on a case identity conflict.
-        Neither leaves a partial write behind.
+        Idempotence and conflict are both queue-local, and that is the whole
+        tenancy property on the write side. Registering an identical context
+        into a *different* queue is a first registration there, not a replay;
+        registering a changed context conflicts only with the queue that
+        already holds one. Two tenants who happen to generate identical
+        workflows are independent, and neither can observe the other.
+
+        Raises ``ReviewQueueNotFoundError`` when the bound queue does not
+        exist, ``ReviewWorkflowContextConflictError`` when *this queue's*
+        stored context describes a different record set or AUTO_MATCH
+        snapshot, and ``DuplicateCaseRegistrationError`` on a case identity
+        conflict. None of them leaves a partial write behind.
         """
         records = tuple(entity_records)
         records_payload = entity_records_to_payload(records)
@@ -208,6 +290,11 @@ class SqliteReviewCaseRepository:
         self._assert_records_cover_cases(state, records)
 
         with self._database.transaction() as connection:
+            # Checked inside the transaction and before anything is written.
+            # The foreign key would refuse the rows anyway, but as a bare
+            # IntegrityError; an operator addressing a queue that does not
+            # exist deserves to be told that, not a constraint name.
+            self._assert_queue_exists(connection)
             timestamp = now_utc if now_utc is not None else utc_timestamp(self._clock)
             self._store_context(
                 connection,
@@ -218,6 +305,19 @@ class SqliteReviewCaseRepository:
             )
             return tuple(
                 self._register_case_in(connection, case, timestamp) for case in state.cases
+            )
+
+    def _assert_queue_exists(self, connection: sqlite3.Connection) -> None:
+        """Refuse to write review data into a queue nobody created.
+
+        With tenant ownership flowing through the queue, a case whose queue is
+        absent would be review data owned by no organization at all.
+        """
+        row = connection.execute(_SELECT_QUEUE, (self._review_queue_id,)).fetchone()
+        if row is None:
+            raise ReviewQueueNotFoundError(
+                f"Review queue {self._review_queue_id} is not stored. Create the queue "
+                "through the operator bootstrap path before registering a workflow into it."
             )
 
     @staticmethod
@@ -266,7 +366,7 @@ class SqliteReviewCaseRepository:
             connection.execute(
                 _INSERT_CONTEXT,
                 (
-                    WORKFLOW_CONTEXT_ID,
+                    self._review_queue_id,
                     canonical_json(records_payload),
                     canonical_json(snapshot_payload),
                     entity_resolution_config_path,
@@ -279,10 +379,11 @@ class SqliteReviewCaseRepository:
 
         if stored.fingerprint != incoming:
             raise ReviewWorkflowContextConflictError(
-                "Stored workflow authorization context describes a different record set "
-                "or AUTO_MATCH snapshot than the one being registered. Refusing to "
-                "replace it: human decisions already recorded were authorized against "
-                "the stored context."
+                f"Review queue {self._review_queue_id} already stores a workflow "
+                "authorization context describing a different record set or AUTO_MATCH "
+                "snapshot than the one being registered. Refusing to replace it: human "
+                "decisions already recorded in this queue were authorized against the "
+                "stored context."
             )
         if (
             entity_resolution_config_path is not None
@@ -290,8 +391,8 @@ class SqliteReviewCaseRepository:
             and entity_resolution_config_path != stored.entity_resolution_config_path
         ):
             raise ReviewWorkflowContextConflictError(
-                "Stored workflow context was generated with entity-resolution config "
-                f"{stored.entity_resolution_config_path!r}, not "
+                f"Review queue {self._review_queue_id} was generated with "
+                f"entity-resolution config {stored.entity_resolution_config_path!r}, not "
                 f"{entity_resolution_config_path!r}. Authorizing against different "
                 "thresholds than the queue was generated with is unsafe."
             )
@@ -308,6 +409,7 @@ class SqliteReviewCaseRepository:
         the missing authorization material.
         """
         with self._database.transaction() as connection:
+            self._assert_queue_exists(connection)
             timestamp = now_utc if now_utc is not None else utc_timestamp(self._clock)
             return self._register_case_in(connection, case, timestamp)
 
@@ -327,7 +429,11 @@ class SqliteReviewCaseRepository:
         try:
             connection.execute(
                 _INSERT_CASE,
-                case_to_row(persisted, schema_version=DATABASE_SCHEMA_VERSION),
+                case_to_row(
+                    persisted,
+                    review_queue_id=self._review_queue_id,
+                    schema_version=DATABASE_SCHEMA_VERSION,
+                ),
             )
         except sqlite3.IntegrityError as exc:
             raise self._registration_conflict(connection, case, exc) from exc
@@ -339,11 +445,15 @@ class SqliteReviewCaseRepository:
         case: ReviewCase,
         exc: sqlite3.IntegrityError,
     ) -> DuplicateCaseRegistrationError:
-        """Translate a UNIQUE(record_a_id, record_b_id) violation into a typed error."""
+        """Translate a UNIQUE(queue, record_a_id, record_b_id) violation.
+
+        Scoped to this queue like everything else: the same record pair in
+        another tenant's queue is not a clash and must not be reported as one.
+        """
         clash = connection.execute(
             f"SELECT review_case_id FROM {REVIEW_CASES_TABLE} "
-            "WHERE record_a_id = ? AND record_b_id = ?",
-            (case.pair.record_a_id, case.pair.record_b_id),
+            "WHERE review_queue_id = ? AND record_a_id = ? AND record_b_id = ?",
+            (self._review_queue_id, case.pair.record_a_id, case.pair.record_b_id),
         ).fetchone()
         if clash is not None:
             return DuplicateCaseRegistrationError(
@@ -511,20 +621,24 @@ class SqliteReviewCaseRepository:
             )
         return stored
 
-    @staticmethod
     def _compare_and_swap_case(
+        self,
         connection: sqlite3.Connection,
         resolved_case: ReviewCase,
         expected_version: int,
         timestamp: str,
     ) -> None:
-        """Update the case only while it still stands at ``expected_version``.
+        """Update this queue's case only while it stands at ``expected_version``.
 
         The read above and this write share one IMMEDIATE transaction, so this
         cannot fail in practice -- but it is the guarantee that does not depend
         on the read having happened. rowcount is the entire verdict: anything
         but 1 means the row moved, and raising here rolls the whole transaction
         back, event included.
+
+        The queue is part of the predicate, not an assumption. A review case id
+        can name a row in another tenant's queue, and an UPDATE that matched it
+        would apply one organization's decision to another's data.
         """
         cursor = connection.execute(
             _CAS_UPDATE_CASE,
@@ -532,6 +646,7 @@ class SqliteReviewCaseRepository:
                 resolved_case.status.value,
                 case_payload_json(resolved_case),
                 timestamp,
+                self._review_queue_id,
                 resolved_case.review_case_id,
                 expected_version,
             ),
@@ -545,10 +660,18 @@ class SqliteReviewCaseRepository:
                 expected_version=expected_version,
             )
 
-    @staticmethod
-    def _append_event(connection: sqlite3.Connection, event: ReviewEvent) -> None:
-        """Append one history row. Never updates, never deletes."""
-        connection.execute(_INSERT_EVENT, event_to_row(event))
+    def _append_event(self, connection: sqlite3.Connection, event: ReviewEvent) -> None:
+        """Append one history row to this queue. Never updates, never deletes.
+
+        The composite foreign key on ``(review_queue_id, review_case_id)`` is
+        the second guarantee here: even if this method were handed an event for
+        a case in another queue, the row would be refused rather than written
+        under the wrong tenant.
+        """
+        connection.execute(
+            _INSERT_EVENT,
+            event_to_row(event, review_queue_id=self._review_queue_id),
+        )
 
     # -- advisory semantic suggestions --------------------------------------
 
@@ -573,6 +696,14 @@ class SqliteReviewCaseRepository:
         not what it claims to be, a stored suggestion is immutable, and
         persistence has no basis for preferring either.
 
+        Replay detection is queue-local, because a suggestion id is a content
+        address rather than a global name. Two queues reviewing structurally
+        identical pairs can produce the same id for two genuinely different
+        observations, and one tenant's stored row must never answer for
+        another's. Nothing about the advisory contract changes: the suggestion
+        is still immutable, still carries no human-decision token, still has no
+        retained explanation, and still cannot touch ``review_cases``.
+
         No statement in this method touches ``review_cases``. The case is read
         only to verify that the suggestion really describes it.
         """
@@ -594,7 +725,11 @@ class SqliteReviewCaseRepository:
             timestamp = now_utc if now_utc is not None else utc_timestamp(self._clock)
             connection.execute(
                 _INSERT_SUGGESTION,
-                suggestion_to_row(suggestion, schema_version=DATABASE_SCHEMA_VERSION),
+                suggestion_to_row(
+                    suggestion,
+                    review_queue_id=self._review_queue_id,
+                    schema_version=DATABASE_SCHEMA_VERSION,
+                ),
             )
             self._append_event(
                 connection,
@@ -620,8 +755,8 @@ class SqliteReviewCaseRepository:
         rows = (
             self._database.connect()
             .execute(
-                _SELECT_SUGGESTIONS + " WHERE review_case_id = ?" + _SUGGESTION_ORDER,
-                (review_case_id,),
+                _SELECT_SUGGESTIONS + " AND review_case_id = ?" + _SUGGESTION_ORDER,
+                (self._review_queue_id, review_case_id),
             )
             .fetchall()
         )
@@ -697,31 +832,38 @@ class SqliteReviewCaseRepository:
             "overwritten."
         )
 
-    @staticmethod
     def _select_suggestion_row(
+        self,
         connection: sqlite3.Connection,
         suggestion_id: str,
     ) -> Mapping[str, Any] | None:
         return connection.execute(
-            _SELECT_SUGGESTIONS + " WHERE suggestion_id = ?",
-            (suggestion_id,),
+            _SELECT_SUGGESTIONS + " AND suggestion_id = ?",
+            (self._review_queue_id, suggestion_id),
         ).fetchone()
 
     # -- reads -------------------------------------------------------------
 
     def get_case(self, review_case_id: str) -> PersistedCase:
-        """Return one stored case, or raise ``ReviewCaseNotFoundError``."""
+        """Return one of this queue's cases, or raise ``ReviewCaseNotFoundError``.
+
+        A case id belonging to another queue is simply absent here, and is
+        reported with the same error as an id that exists nowhere. The two are
+        indistinguishable by construction rather than by policy, because the
+        query cannot see outside its queue.
+        """
         persisted = self._select_case(self._database.connect(), review_case_id)
         if persisted is None:
             raise ReviewCaseNotFoundError(f"Review case not found: {review_case_id}")
         return persisted
 
     def list_cases(self, *, status: ReviewStatus | None = None) -> tuple[PersistedCase, ...]:
-        """Return stored cases in a deterministic order.
+        """Return this queue's cases in a deterministic order.
 
         Ordered by created_at_utc then review_case_id: registration order for
         a human reading the queue, with the deterministic id breaking ties
-        between cases registered inside the same second.
+        between cases registered inside the same second. Another queue's cases
+        are never counted, listed, or paged over.
         """
         return self._select_cases(self._database.connect(), status=status)
 
@@ -744,18 +886,25 @@ class SqliteReviewCaseRepository:
         event disagree. Cases stored before any history existed are still
         readable; see ``review_application.history``.
 
-        Raises ``ReviewWorkflowContextMissingError`` when no context is stored.
-        Returning cases alone would hand the caller a graph missing its
-        AUTO_MATCH edges and records, and a check that should fail closed would
-        quietly pass.
+        The bundle is exactly this queue's world, and that is what keeps Sprint
+        08 authorization meaningful under tenancy. The boundary check projects a
+        connected component across every AUTO_MATCH edge and every recorded
+        human decision it is given; a bundle spanning two queues would let one
+        organization's NO_MATCH forbid another's MATCH, and a bundle narrower
+        than one queue would let an unsafe merge through.
+
+        Raises ``ReviewWorkflowContextMissingError`` when this queue stores no
+        context. Returning cases alone would hand the caller a graph missing
+        its AUTO_MATCH edges and records, and a check that should fail closed
+        would quietly pass.
         """
         with self._database.read_transaction() as connection:
             stored = self._select_context(connection)
             if stored is None:
                 raise ReviewWorkflowContextMissingError(
-                    "No workflow authorization context is stored in this review database. "
-                    "Register a workflow before loading a bundle; a partial bundle would "
-                    "weaken Sprint 08 MATCH authorization."
+                    f"Review queue {self._review_queue_id} stores no workflow "
+                    "authorization context. Register a workflow before loading a bundle; "
+                    "a partial bundle would weaken Sprint 08 MATCH authorization."
                 )
             persisted_cases = self._select_cases(connection)
             events = self._select_events(connection)
@@ -780,57 +929,61 @@ class SqliteReviewCaseRepository:
         Returns domain-shaped ``ReviewEvent`` values, never sqlite rows: every
         event-type invariant is re-checked on the way out, so a row edited
         outside this code cannot be read back as valid history.
+
+        Scoped to this queue, so a history read can never splice in an event
+        that another queue recorded against a case with the same id.
         """
         return self._select_events(self._database.connect(), review_case_id=review_case_id)
 
     def workflow_context(self) -> StoredWorkflowContext | None:
-        """The stored authorization context, or None when none is stored."""
+        """This queue's authorization context, or None when it stores none."""
         return self._select_context(self._database.connect())
 
     # -- row access --------------------------------------------------------
 
-    @staticmethod
     def _select_case(
+        self,
         connection: sqlite3.Connection,
         review_case_id: str,
     ) -> PersistedCase | None:
         row = connection.execute(
-            f"SELECT {_SELECT_COLUMNS} FROM {REVIEW_CASES_TABLE} WHERE review_case_id = ?",
-            (review_case_id,),
+            _SELECT_CASES + " AND review_case_id = ?",
+            (self._review_queue_id, review_case_id),
         ).fetchone()
         return None if row is None else row_to_persisted_case(row)
 
-    @staticmethod
     def _select_cases(
+        self,
         connection: sqlite3.Connection,
         *,
         status: ReviewStatus | None = None,
     ) -> tuple[PersistedCase, ...]:
-        sql = f"SELECT {_SELECT_COLUMNS} FROM {REVIEW_CASES_TABLE}"
-        parameters: tuple[str, ...] = ()
+        # The queue predicate is in _SELECT_CASES and is never optional; status
+        # is the only thing a caller can add.
+        sql = _SELECT_CASES
+        parameters: tuple[str, ...] = (self._review_queue_id,)
         if status is not None:
-            sql += " WHERE status = ?"
-            parameters = (status.value,)
+            sql += " AND status = ?"
+            parameters = (*parameters, status.value)
         rows = connection.execute(sql + _CASE_ORDER, parameters).fetchall()
         return tuple(row_to_persisted_case(row) for row in rows)
 
-    @staticmethod
     def _select_events(
+        self,
         connection: sqlite3.Connection,
         *,
         review_case_id: str | None = None,
     ) -> tuple[ReviewEvent, ...]:
         sql = _SELECT_EVENTS
-        parameters: tuple[str, ...] = ()
+        parameters: tuple[str, ...] = (self._review_queue_id,)
         if review_case_id is not None:
-            sql += " WHERE review_case_id = ?"
-            parameters = (review_case_id,)
+            sql += " AND review_case_id = ?"
+            parameters = (*parameters, review_case_id)
         rows = connection.execute(sql + _EVENT_ORDER, parameters).fetchall()
         return tuple(row_to_review_event(row) for row in rows)
 
-    @staticmethod
-    def _select_context(connection: sqlite3.Connection) -> StoredWorkflowContext | None:
-        row = connection.execute(_SELECT_CONTEXT).fetchone()
+    def _select_context(self, connection: sqlite3.Connection) -> StoredWorkflowContext | None:
+        row = connection.execute(_SELECT_CONTEXT, (self._review_queue_id,)).fetchone()
         if row is None:
             return None
         records_payload = decode_json_column(row["entity_records_json"], "entity_records_json")

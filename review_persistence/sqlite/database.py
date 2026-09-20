@@ -11,6 +11,13 @@ Second, the module never migrates. An unrecognized stored schema version fails
 closed with ``ReviewSchemaVersionError``; it is never upgraded, overwritten, or
 recovered by dropping tables. A review queue holds human decisions, so guessing
 is worse than refusing to open.
+
+That applies in full to a schema 1.0.0 database, which this build can name but
+cannot serve: its review data predates tenant ownership and belongs to no
+organization or queue, so opening it would mean inventing an owner. It raises
+``ReviewSchemaMigrationRequiredError`` -- a ``ReviewSchemaVersionError``, so
+every existing handler answers it unchanged -- and waits for an explicit
+operator migration. Nothing upgrades a database because an application started.
 """
 
 from __future__ import annotations

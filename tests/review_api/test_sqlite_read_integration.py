@@ -36,6 +36,7 @@ from review_persistence.sqlite import (
 )
 from tests.human_review.conftest import match_authorization_kwargs
 from tests.review_api.conftest import NOW, build_review_state, records_by_id
+from tests.review_persistence.conftest import bound_repository
 from tests.review_persistence.semantic_fixtures import make_suggestion
 
 CASES_URL = "/api/v1/review-cases"
@@ -69,7 +70,7 @@ async def open_queue(app: FastAPI, config: ReviewPersistenceConfig) -> AsyncIter
     """
     database = open_review_database(config)
     try:
-        app.state.repository = SqliteReviewCaseRepository(database)
+        app.state.repository = bound_repository(database)
         yield
     finally:
         app.state.repository = None
@@ -90,7 +91,7 @@ def seeded(persistence_config: ReviewPersistenceConfig) -> dict:
 
     database = open_review_database(persistence_config)
     try:
-        repository = SqliteReviewCaseRepository(database)
+        repository = bound_repository(database)
         repository.register_workflow(
             state,
             entity_records=resolution.records,
@@ -126,7 +127,7 @@ def open_repository(seeded: dict) -> Iterator[SqliteReviewCaseRepository]:
     """A short-lived repository on this thread, for seeding and verification."""
     database: ReviewDatabase = open_review_database(seeded["config"])
     try:
-        yield SqliteReviewCaseRepository(database)
+        yield bound_repository(database)
     finally:
         database.close()
 

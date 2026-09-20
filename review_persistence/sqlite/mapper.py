@@ -36,7 +36,14 @@ from review_application.errors import ReviewPersistenceError
 from review_application.models import PersistedCase
 
 # Column order used by every review_cases read and write in this package.
+#
+# review_queue_id leads, matching the composite primary key. It is persistence
+# ownership metadata and is deliberately absent from ``case_payload_json``: the
+# payload is ``ReviewCase.to_dict()`` verbatim, and the Sprint 08 domain object
+# has no tenant field. Which queue owns a case is a fact about storage, not a
+# fact about the reviewed pair.
 REVIEW_CASE_COLUMNS: tuple[str, ...] = (
+    "review_queue_id",
     "review_case_id",
     "record_a_id",
     "record_b_id",
@@ -73,14 +80,24 @@ def case_payload_json(case: ReviewCase) -> str:
     return json.dumps(case.to_dict(), ensure_ascii=False, sort_keys=True)
 
 
-def case_to_row(persisted: PersistedCase, *, schema_version: str) -> tuple[Any, ...]:
+def case_to_row(
+    persisted: PersistedCase,
+    *,
+    review_queue_id: str,
+    schema_version: str,
+) -> tuple[Any, ...]:
     """Project a PersistedCase onto the review_cases column tuple.
 
     The denormalized columns exist only so the queue can be filtered and
     indexed without parsing JSON. ``case_payload_json`` stays authoritative.
+
+    ``review_queue_id`` is supplied by the repository, which is bound to one
+    queue for its whole lifetime. It is not read from the case, because the
+    domain object does not carry one and must not start to.
     """
     case = persisted.case
     return (
+        review_queue_id,
         case.review_case_id,
         case.pair.record_a_id,
         case.pair.record_b_id,

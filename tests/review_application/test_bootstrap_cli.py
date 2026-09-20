@@ -34,10 +34,16 @@ from review_application import ReviewQueueService
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
+from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 from scripts import manage_human_review
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "entity_resolution.yaml"
+
+# Registration now names the tenant that will own the queue. The
+# organization must exist first: the command refuses to create one, so a
+# mistyped slug cannot turn into a new customer holding review data.
+ORGANIZATION_SLUG = "cli-fixture-org"
 
 # Two rows sharing an exact email but conflicting on company, city, district and
 # address. Exact email is strong identity evidence, and the location conflicts
@@ -72,6 +78,30 @@ def run(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
     return manage_human_review.main()
 
 
+def create_organization(
+    monkeypatch: pytest.MonkeyPatch,
+    review_db: Path,
+    slug: str = ORGANIZATION_SLUG,
+) -> int:
+    """Provision the tenant an operator would create before registering."""
+    return run(
+        monkeypatch,
+        "create-organization",
+        "--slug",
+        slug,
+        "--name",
+        "CLI Fixture",
+        "--review-db",
+        str(review_db),
+    )
+
+
+@pytest.fixture
+def organization(monkeypatch: pytest.MonkeyPatch, review_db: Path) -> str:
+    assert create_organization(monkeypatch, review_db) == 0
+    return ORGANIZATION_SLUG
+
+
 def generate(
     monkeypatch: pytest.MonkeyPatch,
     csv_path: Path,
@@ -97,13 +127,19 @@ def generate(
 
 
 def open_queue(review_db: Path) -> tuple[SqliteReviewCaseRepository, object]:
+    """Bind to the single queue the command created, the way the API does."""
     config = ReviewPersistenceConfig(
         database_path=review_db,
         busy_timeout_ms=2000,
         journal_mode="WAL",
     )
     database = open_review_database(config)
-    return SqliteReviewCaseRepository(database), database
+    queues = SqliteTenantRepository(database).list_all_review_queues()
+    assert len(queues) == 1, f"expected one queue, found {len(queues)}"
+    return (
+        SqliteReviewCaseRepository(database, review_queue_id=queues[0].review_queue_id),
+        database,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -180,15 +216,9 @@ def test_registering_stores_the_generated_case_and_its_context(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
 ) -> None:
-    exit_code = generate(
-        monkeypatch,
-        csv_path,
-        tmp_path / "report",
-        "--register-review-queue",
-        "--review-db",
-        str(review_db),
-    )
+    exit_code = register(monkeypatch, csv_path, tmp_path / "report", review_db)
 
     assert exit_code == 0
     assert review_db.exists()
@@ -209,16 +239,11 @@ def test_the_operator_output_is_counts_and_a_path(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    generate(
-        monkeypatch,
-        csv_path,
-        tmp_path / "report",
-        "--register-review-queue",
-        "--review-db",
-        str(review_db),
-    )
+    capsys.readouterr()
+    register(monkeypatch, csv_path, tmp_path / "report", review_db)
 
     out = capsys.readouterr().out
     assert str(review_db) in out
@@ -242,17 +267,11 @@ def test_no_customer_value_or_authorization_material_reaches_the_terminal(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
     capsys: pytest.CaptureFixture[str],
     value: str,
 ) -> None:
-    generate(
-        monkeypatch,
-        csv_path,
-        tmp_path / "report",
-        "--register-review-queue",
-        "--review-db",
-        str(review_db),
-    )
+    assert register(monkeypatch, csv_path, tmp_path / "report", review_db) == 0
 
     assert value not in capsys.readouterr().out
 
@@ -269,6 +288,7 @@ def register(
     review_db: Path,
     *,
     entity_resolution_config: Path | None = None,
+    slug: str = ORGANIZATION_SLUG,
 ) -> int:
     return generate(
         monkeypatch,
@@ -277,6 +297,8 @@ def register(
         "--register-review-queue",
         "--review-db",
         str(review_db),
+        "--organization",
+        slug,
         entity_resolution_config=entity_resolution_config,
     )
 
@@ -286,6 +308,7 @@ def test_registering_the_same_input_twice_is_idempotent(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert register(monkeypatch, csv_path, tmp_path / "first", review_db) == 0
@@ -307,6 +330,7 @@ def test_a_re_run_after_a_review_leaves_the_decision_standing(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
 ) -> None:
     """The failure this flag exists to avoid, tested end to end.
 
@@ -352,6 +376,7 @@ def test_changed_input_records_are_refused_without_touching_the_queue(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """An edited input file is the realistic way a stored context stops matching."""
@@ -376,6 +401,7 @@ def test_a_different_entity_resolution_config_path_is_refused(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
 ) -> None:
     """Same thresholds, different path: the queue still refuses.
 
@@ -402,6 +428,7 @@ def test_a_refusal_prints_one_operator_line_and_no_traceback(
     tmp_path: Path,
     csv_path: Path,
     review_db: Path,
+    organization: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     register(monkeypatch, csv_path, tmp_path / "first", review_db)

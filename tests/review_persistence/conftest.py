@@ -12,15 +12,32 @@ from human_review.cases import generate_review_cases
 from human_review.models import HumanReviewDecision, ReviewCase, ReviewWorkflowState
 from human_review.reporting import resolution_snapshot
 from human_review.workflow import ReviewWorkflow
+from identity.models import Organization
+from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
+from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 from tests.human_review.conftest import (
     make_bridge_resolution,
     make_record,
     make_review_resolution,
     match_authorization_kwargs,
 )
+
+# Readable, pinned identifiers. ``assert_opaque_id`` deliberately does not
+# require the generated 32-hex form, so a fixture can name a tenant something a
+# failing assertion is legible about while still exercising the production
+# validation path.
+ORGANIZATION_ID = "ORG-fixture-primary"
+ORGANIZATION_SLUG = "fixture-primary"
+REVIEW_QUEUE_ID = "RQ-fixture-primary"
+
+SECOND_ORGANIZATION_ID = "ORG-fixture-second"
+SECOND_ORGANIZATION_SLUG = "fixture-second"
+SECOND_REVIEW_QUEUE_ID = "RQ-fixture-second"
+
+PROVISIONED_AT = "2026-09-12T07:00:00Z"
 
 
 class FrozenClock:
@@ -63,9 +80,99 @@ def database(
         db.close()
 
 
+def provision_queue(
+    database: ReviewDatabase,
+    *,
+    organization_id: str = ORGANIZATION_ID,
+    slug: str = ORGANIZATION_SLUG,
+    review_queue_id: str = REVIEW_QUEUE_ID,
+    queue_name: str = "default",
+) -> ReviewQueue:
+    """Create an organization and one queue inside it, through production code.
+
+    Nothing in the tests inserts tenant rows by hand. Review data is owned by a
+    queue and a queue by an organization, so a fixture that bypassed
+    ``SqliteTenantRepository`` would be testing a graph the application cannot
+    actually produce.
+    """
+    tenants = SqliteTenantRepository(database)
+    tenants.create_organization(
+        Organization.create(
+            slug=slug,
+            display_name=slug,
+            created_at_utc=PROVISIONED_AT,
+            organization_id=organization_id,
+        )
+    )
+    return tenants.create_review_queue(
+        ReviewQueue.create(
+            organization_id=organization_id,
+            name=queue_name,
+            created_at_utc=PROVISIONED_AT,
+            review_queue_id=review_queue_id,
+        )
+    )
+
+
+def bound_repository(
+    database: ReviewDatabase,
+    clock: FrozenClock | None = None,
+) -> SqliteReviewCaseRepository:
+    """A repository on the fixture queue, provisioning it if the file is new.
+
+    The restart tests open their own databases, so they cannot use the
+    ``repository`` fixture. This gives them the same binding: the tenant rows
+    are created on first use and found again after a reopen, which is also how
+    a real installation behaves across a restart.
+    """
+    tenants = SqliteTenantRepository(database)
+    queue = tenants.get_review_queue(REVIEW_QUEUE_ID) or provision_queue(database)
+    if clock is None:
+        return SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id)
+    return SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id, clock=clock)
+
+
+def provision_second_queue(database: ReviewDatabase) -> ReviewQueue:
+    """A second tenant with its own queue, for the isolation tests."""
+    return provision_queue(
+        database,
+        organization_id=SECOND_ORGANIZATION_ID,
+        slug=SECOND_ORGANIZATION_SLUG,
+        review_queue_id=SECOND_REVIEW_QUEUE_ID,
+    )
+
+
 @pytest.fixture
-def repository(database: ReviewDatabase, clock: FrozenClock) -> SqliteReviewCaseRepository:
-    return SqliteReviewCaseRepository(database, clock=clock)
+def review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_queue(database)
+
+
+@pytest.fixture
+def second_review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_second_queue(database)
+
+
+@pytest.fixture
+def repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=review_queue.review_queue_id, clock=clock
+    )
+
+
+@pytest.fixture
+def second_repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    second_review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    """A repository bound to the other tenant's queue, over the same database."""
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=second_review_queue.review_queue_id, clock=clock
+    )
 
 
 @pytest.fixture

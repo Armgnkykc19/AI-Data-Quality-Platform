@@ -47,7 +47,7 @@ from tests.human_review.conftest import (
     make_chain_review_resolution,
     make_triangle_review_resolution,
 )
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, bound_repository
 
 CONFIG_PATH = "configs/entity_resolution.yaml"
 
@@ -162,10 +162,15 @@ def test_events_are_returned_in_append_order(
     # A lifecycle row appended before the resolution, at the same timestamp.
     database.connect().execute(
         f"INSERT INTO {REVIEW_CASE_EVENTS_TABLE} "
-        "(review_case_id, event_type, resolution_sequence, reviewer_id, audit_entry_json, "
-        "suggestion_id, occurred_at_utc, schema_version) "
-        "VALUES (?, 'CASE_CREATED', NULL, NULL, NULL, NULL, ?, ?)",
-        (case_id, "2026-09-12T08:00:00Z", "1.0.0"),
+        "(review_queue_id, review_case_id, event_type, resolution_sequence, reviewer_id, "
+        "audit_entry_json, suggestion_id, occurred_at_utc, schema_version) "
+        "VALUES (?, ?, 'CASE_CREATED', NULL, NULL, NULL, NULL, ?, ?)",
+        (
+            repository.review_queue_id,
+            case_id,
+            "2026-09-12T08:00:00Z",
+            DATABASE_SCHEMA_VERSION,
+        ),
     )
     service.resolve_case(
         case_id,
@@ -400,10 +405,16 @@ def test_a_second_resolution_event_for_one_case_is_rejected(
     payload["resolution_sequence"] = 2
     database.connect().execute(
         f"INSERT INTO {REVIEW_CASE_EVENTS_TABLE} "
-        "(review_case_id, event_type, resolution_sequence, reviewer_id, audit_entry_json, "
-        "suggestion_id, occurred_at_utc, schema_version) "
-        "VALUES (?, 'NO_MATCH', 2, 'reviewer-1', ?, NULL, ?, '1.0.0')",
-        (case_id, json.dumps(payload), "2026-09-12T10:00:00Z"),
+        "(review_queue_id, review_case_id, event_type, resolution_sequence, reviewer_id, "
+        "audit_entry_json, suggestion_id, occurred_at_utc, schema_version) "
+        "VALUES (?, ?, 'NO_MATCH', 2, 'reviewer-1', ?, NULL, ?, ?)",
+        (
+            repository.review_queue_id,
+            case_id,
+            json.dumps(payload),
+            "2026-09-12T10:00:00Z",
+            DATABASE_SCHEMA_VERSION,
+        ),
     )
 
     with pytest.raises(ReviewEventIntegrityError, match="more than one resolution"):
@@ -558,7 +569,7 @@ def test_a_decision_survives_closing_and_reopening_the_database(
     state = generate_review_cases(resolution, config=resolution_config)
 
     database = open_review_database(persistence_config, clock=clock)
-    repository = SqliteReviewCaseRepository(database, clock=clock)
+    repository = bound_repository(database, clock)
     register(repository, state, resolution)
     case_id = state.cases[0].review_case_id
     before = ReviewQueueService(repository, clock=clock).resolve_case(
@@ -571,7 +582,7 @@ def test_a_decision_survives_closing_and_reopening_the_database(
 
     reopened = open_review_database(persistence_config, clock=clock)
     try:
-        fresh_repository = SqliteReviewCaseRepository(reopened, clock=clock)
+        fresh_repository = bound_repository(reopened, clock)
         fresh_service = ReviewQueueService(fresh_repository, clock=clock)
 
         persisted = fresh_repository.get_case(case_id)

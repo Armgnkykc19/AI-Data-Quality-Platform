@@ -43,7 +43,7 @@ from review_persistence.schema import DATABASE_SCHEMA_VERSION, REVIEW_CASE_EVENT
 from review_persistence.sqlite.database import ReviewDatabase
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from tests.human_review.conftest import match_authorization_kwargs
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, bound_repository
 
 RESOLVED_AT = "2026-09-12T09:30:00Z"
 
@@ -499,10 +499,14 @@ def test_a_failure_after_the_case_update_rolls_the_case_back_too(
     )
     before = stored_snapshot(repository, registered.review_case_id)
 
-    def explode(connection: object, appended: ReviewEvent) -> None:
+    def explode(
+        instance: SqliteReviewCaseRepository,
+        connection: object,
+        appended: ReviewEvent,
+    ) -> None:
         raise RuntimeError("history append failed")
 
-    monkeypatch.setattr(SqliteReviewCaseRepository, "_append_event", staticmethod(explode))
+    monkeypatch.setattr(SqliteReviewCaseRepository, "_append_event", explode)
 
     with pytest.raises(RuntimeError, match="history append failed"):
         repository.apply_resolution(
@@ -533,17 +537,21 @@ def test_the_rollback_survives_reopening_the_database(
         decision=HumanReviewDecision.NO_MATCH,
     )
 
-    def explode(connection: object, appended: ReviewEvent) -> None:
+    def explode(
+        instance: SqliteReviewCaseRepository,
+        connection: object,
+        appended: ReviewEvent,
+    ) -> None:
         raise RuntimeError("history append failed")
 
-    monkeypatch.setattr(SqliteReviewCaseRepository, "_append_event", staticmethod(explode))
+    monkeypatch.setattr(SqliteReviewCaseRepository, "_append_event", explode)
     with pytest.raises(RuntimeError):
         repository.apply_resolution(case, expected_version=1, event=event, now_utc=RESOLVED_AT)
 
     monkeypatch.undo()
     database.close()
     database.initialize()
-    reopened = SqliteReviewCaseRepository(database, clock=clock)
+    reopened = bound_repository(database, clock)
 
     persisted = reopened.get_case(registered.review_case_id)
     assert persisted.status is ReviewStatus.PENDING
@@ -571,10 +579,11 @@ def test_an_event_insert_rejected_by_the_schema_rolls_the_case_back(
     # internally consistent so it is the index, not a malformed row, that fires.
     database.connect().execute(
         f"INSERT INTO {REVIEW_CASE_EVENTS_TABLE} "
-        "(review_case_id, event_type, resolution_sequence, reviewer_id, audit_entry_json, "
-        "suggestion_id, occurred_at_utc, schema_version) "
-        "VALUES (?, 'NO_MATCH', 1, 'reviewer-1', ?, NULL, ?, ?)",
+        "(review_queue_id, review_case_id, event_type, resolution_sequence, reviewer_id, "
+        "audit_entry_json, suggestion_id, occurred_at_utc, schema_version) "
+        "VALUES (?, ?, 'NO_MATCH', 1, 'reviewer-1', ?, NULL, ?, ?)",
         (
+            repository.review_queue_id,
             registered.review_case_id,
             json.dumps(event.audit_entry_payload),
             RESOLVED_AT,

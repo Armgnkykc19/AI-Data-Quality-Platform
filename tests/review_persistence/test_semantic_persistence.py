@@ -50,7 +50,7 @@ from semantic_review.models import (
     SemanticSuggestionType,
 )
 from tests.human_review.conftest import make_triangle_review_resolution
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, bound_repository
 from tests.review_persistence.semantic_fixtures import (
     as_provider_failure,
     make_suggestion,
@@ -613,7 +613,7 @@ def test_the_rollback_leaves_nothing_in_the_reopened_database(
 
     database.close()
     database.initialize()
-    reopened = SqliteReviewCaseRepository(database, clock=clock)
+    reopened = bound_repository(database, clock)
     assert reopened.list_semantic_suggestions(registered_case.review_case_id) == ()
     assert reopened.list_events(registered_case.review_case_id) == ()
     assert reopened.get_case(registered_case.review_case_id).status is ReviewStatus.PENDING
@@ -1017,7 +1017,7 @@ def test_everything_advisory_survives_a_restart(
     case = review_state.cases[0]
 
     database = open_review_database(persistence_config, clock=clock)
-    repository = SqliteReviewCaseRepository(database, clock=clock)
+    repository = bound_repository(database, clock)
     repository.register_workflow(
         review_state,
         entity_records=resolution.records,
@@ -1036,7 +1036,7 @@ def test_everything_advisory_survives_a_restart(
 
     reopened = open_review_database(persistence_config, clock=clock)
     try:
-        fresh = SqliteReviewCaseRepository(reopened, clock=clock)
+        fresh = bound_repository(reopened, clock)
 
         stored = fresh.list_semantic_suggestions(case.review_case_id)
         assert set(stored) == {as_stored(advisory), as_stored(failure)}

@@ -22,7 +22,10 @@ from pathlib import Path
 import pytest
 
 from human_review.models import ReviewStatus
-from review_application.errors import ReviewSchemaVersionError
+from review_application.errors import (
+    ReviewSchemaMigrationRequiredError,
+    ReviewSchemaVersionError,
+)
 from review_application.models import ReviewEventType
 from review_persistence.schema import (
     ALL_TABLES,
@@ -42,6 +45,13 @@ from review_persistence.schema import (
 
 NOW = "2026-09-12T00:00:00Z"
 CASE_ID = "RC-000000000000abcd"
+
+# Tenant rows every review row now hangs from. Inserted by the fixture rather
+# than by each test, because a review case without an owning queue is not a
+# row schema 2.0.0 can hold at all.
+ORGANIZATION_ID = "ORG-schema-contract"
+QUEUE_ID = "RQ-schema-contract"
+OTHER_QUEUE_ID = "RQ-schema-contract-other"
 
 EXPECTED_REVIEW_STATUS_VALUES = {"PENDING", "MATCH", "NO_MATCH", "DEFERRED"}
 EXPECTED_SEMANTIC_SUGGESTION_VALUES = {
@@ -72,6 +82,7 @@ FORBIDDEN_SCHEMA_TOKENS = (
 )
 
 CASE_COLUMNS = (
+    "review_queue_id",
     "review_case_id",
     "record_a_id",
     "record_b_id",
@@ -95,6 +106,26 @@ def _check_in_list(ddl: str, column: str) -> set[str]:
     return set(tokens)
 
 
+def _insert_tenant_rows(conn: sqlite3.Connection) -> None:
+    """One organization and two queues, so ownership and isolation are testable.
+
+    The second queue exists for the collision assertions: the whole point of
+    the composite key is that two queues may hold the same deterministic
+    review_case_id.
+    """
+    conn.execute(
+        "INSERT INTO organizations (organization_id, slug, display_name, status, "
+        "created_at_utc) VALUES (?, 'schema-contract', 'Schema Contract', 'ACTIVE', ?)",
+        (ORGANIZATION_ID, NOW),
+    )
+    for queue_id, name in ((QUEUE_ID, "first"), (OTHER_QUEUE_ID, "second")):
+        conn.execute(
+            "INSERT INTO review_queues (review_queue_id, organization_id, name, "
+            "created_at_utc) VALUES (?, ?, ?, ?)",
+            (queue_id, ORGANIZATION_ID, name, NOW),
+        )
+
+
 @pytest.fixture
 def connection() -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(":memory:")
@@ -103,6 +134,7 @@ def connection() -> Iterator[sqlite3.Connection]:
     conn.execute("PRAGMA foreign_keys = ON")
     for statement in SCHEMA_STATEMENTS:
         conn.execute(statement)
+    _insert_tenant_rows(conn)
     try:
         yield conn
     finally:
@@ -117,11 +149,13 @@ def _insert_case(
     record_b_id: str = "a-2",
     status: str = "PENDING",
     version: int = 1,
+    review_queue_id: str = QUEUE_ID,
 ) -> None:
     conn.execute(
         f"INSERT INTO review_cases ({', '.join(CASE_COLUMNS)}) "
         f"VALUES ({', '.join('?' * len(CASE_COLUMNS))})",
         (
+            review_queue_id,
             review_case_id,
             record_a_id,
             record_b_id,
@@ -146,13 +180,15 @@ def _insert_event(
     audit_entry_json: str | None = None,
     suggestion_id: str | None = None,
     review_case_id: str = CASE_ID,
+    review_queue_id: str = QUEUE_ID,
 ) -> None:
     conn.execute(
         "INSERT INTO review_case_events ("
-        "review_case_id, event_type, resolution_sequence, reviewer_id, "
-        "audit_entry_json, suggestion_id, occurred_at_utc, schema_version"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "review_queue_id, review_case_id, event_type, resolution_sequence, "
+        "reviewer_id, audit_entry_json, suggestion_id, occurred_at_utc, schema_version"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
+            review_queue_id,
             review_case_id,
             event_type,
             resolution_sequence,
@@ -171,14 +207,16 @@ def _insert_suggestion(
     suggestion: str,
     suggestion_id: str = "LS-0123456789abcdef",
     review_case_id: str = CASE_ID,
+    review_queue_id: str = QUEUE_ID,
 ) -> None:
     conn.execute(
         "INSERT INTO semantic_suggestions ("
-        "suggestion_id, review_case_id, record_a_id, record_b_id, suggestion, "
-        "failure_code, live, provider, requested_model, suggestion_payload_json, "
-        "created_at_utc, schema_version"
-        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "review_queue_id, suggestion_id, review_case_id, record_a_id, record_b_id, "
+        "suggestion, failure_code, live, provider, requested_model, "
+        "suggestion_payload_json, created_at_utc, schema_version"
+        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
+            review_queue_id,
             suggestion_id,
             review_case_id,
             "a-1",
@@ -201,15 +239,31 @@ def _insert_suggestion(
 
 
 def test_declared_schema_version_is_supported() -> None:
-    assert DATABASE_SCHEMA_VERSION == "1.0.0"
+    assert DATABASE_SCHEMA_VERSION == "2.0.0"
     assert DATABASE_SCHEMA_VERSION in SUPPORTED_DATABASE_SCHEMA_VERSIONS
     assert_supported_schema_version(DATABASE_SCHEMA_VERSION)
 
 
-@pytest.mark.parametrize("version", ["0.9.0", "2.0.0", "", "1.0"])
+@pytest.mark.parametrize("version", ["0.9.0", "3.0.0", "", "1.0", "2.0"])
 def test_unsupported_schema_version_fails_closed(version: str) -> None:
     with pytest.raises(ReviewSchemaVersionError):
         assert_supported_schema_version(version)
+
+
+def test_the_previous_schema_version_demands_an_explicit_migration() -> None:
+    """1.0.0 is recognized, refused, and distinguishable from an unknown version.
+
+    The distinction matters to an operator: a 1.0.0 database holds review data
+    that predates tenant ownership and can be migrated forward, while an
+    unknown version was written by a build this code has never seen.
+    """
+    with pytest.raises(ReviewSchemaMigrationRequiredError) as failure:
+        assert_supported_schema_version("1.0.0")
+
+    assert failure.value.stored_version == "1.0.0"
+    assert failure.value.required_version == DATABASE_SCHEMA_VERSION
+    # Still a schema-version error, so every existing handler answers it.
+    assert isinstance(failure.value, ReviewSchemaVersionError)
 
 
 def test_schema_declares_the_expected_tables(connection: sqlite3.Connection) -> None:
@@ -381,15 +435,23 @@ def test_resolution_sequence_is_unique_per_case(connection: sqlite3.Connection) 
 
 def test_events_reference_cases_with_restrict(connection: sqlite3.Connection) -> None:
     keys = connection.execute("PRAGMA foreign_key_list(review_case_events)").fetchall()
-    assert [(key[2], key[3], key[4], key[6]) for key in keys] == [
-        ("review_cases", "review_case_id", "review_case_id", "RESTRICT")
-    ]
+    # A composite key naming both columns. A single-column reference on
+    # review_case_id would be ambiguous now that the value repeats across
+    # queues, and would be exactly the cross-tenant edge this prevents.
+    assert {(key[2], key[3], key[4], key[6]) for key in keys} == {
+        ("review_cases", "review_queue_id", "review_queue_id", "RESTRICT"),
+        ("review_cases", "review_case_id", "review_case_id", "RESTRICT"),
+    }
 
     _insert_case(connection)
     _insert_event(connection, event_type="CASE_CREATED")
 
     with pytest.raises(sqlite3.IntegrityError):
         _insert_event(connection, event_type="CASE_CREATED", review_case_id="RC-unknown")
+
+    # The case id exists, but in another queue: still refused.
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_event(connection, event_type="CASE_CREATED", review_queue_id=OTHER_QUEUE_ID)
 
     # History is never orphaned by deleting the case it describes.
     with pytest.raises(sqlite3.IntegrityError):
@@ -445,12 +507,12 @@ def test_suggestion_id_is_insert_if_absent(connection: sqlite3.Connection) -> No
 
     connection.execute(
         "INSERT OR IGNORE INTO semantic_suggestions ("
-        "suggestion_id, review_case_id, record_a_id, record_b_id, suggestion, "
-        "failure_code, live, provider, requested_model, suggestion_payload_json, "
-        "created_at_utc, schema_version"
-        ") VALUES ('LS-0123456789abcdef', ?, 'a-1', 'a-2', 'SUGGEST_NO_MATCH', NULL, 0, "
+        "review_queue_id, suggestion_id, review_case_id, record_a_id, record_b_id, "
+        "suggestion, failure_code, live, provider, requested_model, "
+        "suggestion_payload_json, created_at_utc, schema_version"
+        ") VALUES (?, 'LS-0123456789abcdef', ?, 'a-1', 'a-2', 'SUGGEST_NO_MATCH', NULL, 0, "
         "'simulated', 'test-model', '{}', ?, ?)",
-        (CASE_ID, NOW, DATABASE_SCHEMA_VERSION),
+        (QUEUE_ID, CASE_ID, NOW, DATABASE_SCHEMA_VERSION),
     )
     stored = connection.execute("SELECT suggestion FROM semantic_suggestions").fetchall()
     assert stored == [("SUGGEST_MATCH",)]
@@ -458,12 +520,18 @@ def test_suggestion_id_is_insert_if_absent(connection: sqlite3.Connection) -> No
 
 def test_suggestions_reference_cases_with_restrict(connection: sqlite3.Connection) -> None:
     keys = connection.execute("PRAGMA foreign_key_list(semantic_suggestions)").fetchall()
-    assert [(key[2], key[3], key[4], key[6]) for key in keys] == [
-        ("review_cases", "review_case_id", "review_case_id", "RESTRICT")
-    ]
+    assert {(key[2], key[3], key[4], key[6]) for key in keys} == {
+        ("review_cases", "review_queue_id", "review_queue_id", "RESTRICT"),
+        ("review_cases", "review_case_id", "review_case_id", "RESTRICT"),
+    }
 
     with pytest.raises(sqlite3.IntegrityError):
         _insert_suggestion(connection, suggestion="SUGGEST_MATCH", review_case_id="RC-unknown")
+
+    # An advisory row cannot attach to a case belonging to another queue.
+    _insert_case(connection)
+    with pytest.raises(sqlite3.IntegrityError):
+        _insert_suggestion(connection, suggestion="SUGGEST_MATCH", review_queue_id=OTHER_QUEUE_ID)
 
 
 # --------------------------------------------------------------------------

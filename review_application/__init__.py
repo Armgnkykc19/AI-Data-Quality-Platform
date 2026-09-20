@@ -5,14 +5,18 @@ Orchestrates persistence around the unchanged Sprint 08 Human Review domain.
 nothing here reimplements MATCH authorization.
 
 ``ReviewQueueService`` is the supported entry point for resolving a persisted
-case, and ``register_review_queue`` is the supported entry point for bringing
-one into existence. Both are exported from the package root, while the
-repository Protocol they depend on is implemented in ``review_persistence``.
+case, and ``register_review_workflow`` is the supported entry point for filling
+a queue with cases to decide. Both are exported from the package root, while
+the repository Protocol they depend on is implemented in ``review_persistence``.
+
+``ReviewQueue`` is the aggregate an organization owns and the boundary every
+review record is scoped to; see ``review_application.queues`` for why the queue
+rather than the organization is the direct owner.
 """
 
 from review_application.bootstrap import (
-    ReviewQueueRegistration,
-    register_review_queue,
+    ReviewWorkflowRegistration,
+    register_review_workflow,
 )
 from review_application.errors import (
     DuplicateCaseRegistrationError,
@@ -23,6 +27,8 @@ from review_application.errors import (
     ReviewConflictError,
     ReviewEventIntegrityError,
     ReviewPersistenceError,
+    ReviewQueueNotFoundError,
+    ReviewSchemaMigrationRequiredError,
     ReviewSchemaVersionError,
     SemanticSuggestionConflictError,
     SemanticSuggestionIntegrityError,
@@ -38,10 +44,16 @@ from review_application.models import (
     ReviewEventType,
     WorkflowBundle,
 )
+from review_application.queues import (
+    REVIEW_QUEUE_ID_PREFIX,
+    ReviewQueue,
+    new_review_queue_id,
+)
 from review_application.repository import ReviewCaseRepository
 from review_application.service import ReviewQueueService, ReviewResolutionResult
 
 __all__ = [
+    "REVIEW_QUEUE_ID_PREFIX",
     "DuplicateCaseRegistrationError",
     "PersistedCase",
     "PersistedCaseIntegrityError",
@@ -55,14 +67,18 @@ __all__ = [
     "ReviewEventIntegrityError",
     "ReviewEventType",
     "ReviewPersistenceError",
-    "ReviewQueueRegistration",
+    "ReviewQueue",
+    "ReviewQueueNotFoundError",
     "ReviewQueueService",
     "ReviewResolutionResult",
+    "ReviewSchemaMigrationRequiredError",
     "ReviewSchemaVersionError",
+    "ReviewWorkflowRegistration",
     "SemanticSuggestionConflictError",
     "SemanticSuggestionIntegrityError",
     "WorkflowBundle",
     "audit_entry_from_payload",
+    "new_review_queue_id",
     "reconstruct_history",
-    "register_review_queue",
+    "register_review_workflow",
 ]

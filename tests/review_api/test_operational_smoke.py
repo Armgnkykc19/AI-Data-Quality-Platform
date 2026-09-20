@@ -37,6 +37,11 @@ from scripts import manage_human_review
 
 BASE_URL = "/api/v1/review-cases"
 
+# The tenant the operator creates before registering anything. The chain
+# below runs the real command, so this is also the proof that a queue
+# cannot come into existence without a named organization.
+ORGANIZATION_SLUG = "operational-smoke"
+
 # Two rows sharing an exact email while conflicting on company, city, district
 # and address: strong identity evidence, a score below AUTO_MATCH, and therefore
 # exactly one REVIEW case from the real entity-resolution engine.
@@ -72,23 +77,46 @@ def configured_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     return database
 
 
+def run_command(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
+    """Invoke the operator CLI the way an operator types it."""
+    monkeypatch.setattr(sys, "argv", ["manage_human_review.py", *argv])
+    return manage_human_review.main()
+
+
+def create_organization(monkeypatch: pytest.MonkeyPatch) -> int:
+    return run_command(
+        monkeypatch,
+        "create-organization",
+        "--slug",
+        ORGANIZATION_SLUG,
+        "--name",
+        "Operational Smoke",
+    )
+
+
 def bootstrap_queue(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> int:
-    """Run the official operator command. No ``--review-db``: the default is the point."""
+    """The official operator chain: create the tenant, then register a workflow.
+
+    No ``--review-db`` on either command: the default configured path is the
+    thing being exercised. The organization is created first because
+    registration refuses to invent one -- review data owned by a tenant
+    nobody named would be review data nobody owns.
+    """
     csv_path = tmp_path / "customers.csv"
     csv_path.write_text(OPERATIONAL_CSV, encoding="utf-8")
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "manage_human_review.py",
-            "generate",
-            str(csv_path),
-            "--report-dir",
-            str(tmp_path / "report"),
-            "--register-review-queue",
-        ],
+    created = create_organization(monkeypatch)
+    if created != 0:
+        return created
+    return run_command(
+        monkeypatch,
+        "generate",
+        str(csv_path),
+        "--report-dir",
+        str(tmp_path / "report"),
+        "--register-review-queue",
+        "--organization",
+        ORGANIZATION_SLUG,
     )
-    return manage_human_review.main()
 
 
 def serve() -> TestClient:
@@ -173,19 +201,32 @@ def test_the_bootstrap_and_runtime_defaults_are_one_database(
     assert api_dependencies.configured_database_path().exists()
 
 
-def test_an_unbootstrapped_queue_fails_closed_rather_than_deciding(
+def test_a_queue_with_no_registered_workflow_fails_closed_rather_than_deciding(
+    monkeypatch: pytest.MonkeyPatch,
     configured_queue: Path,
 ) -> None:
-    """A database with a valid schema but no registered workflow context.
+    """An existing, empty review queue: readable, and unable to decide anything.
 
-    This is the residual state the runner's file-existence check cannot detect,
-    so it is pinned here instead. Reads answer an honest empty page, and any
+    This is the residual state no startup check can detect -- the queue is
+    real and owned by a real organization, it simply has no workflow
+    authorization context yet. Reads answer an honest empty page, and any
     attempt to decide is refused with 503 rather than evaluated against an
     authorization graph that was never stored.
     """
+    assert create_organization(monkeypatch) == 0
+    assert (
+        run_command(
+            monkeypatch,
+            "create-review-queue",
+            "--organization",
+            ORGANIZATION_SLUG,
+            "--name",
+            "empty",
+        )
+        == 0
+    )
+
     with serve() as client:
-        # Starting the app initializes the schema, which is what makes this the
-        # "valid schema, never bootstrapped" case rather than a missing file.
         assert client.get(BASE_URL).json()["total"] == 0
 
         refused = client.post(
@@ -195,6 +236,50 @@ def test_an_unbootstrapped_queue_fails_closed_rather_than_deciding(
 
     assert refused.status_code == 503
     assert refused.json()["error"]["code"] == "REVIEW_QUEUE_NOT_READY"
+
+
+def test_serving_a_database_with_no_review_queue_refuses_to_start(
+    configured_queue: Path,
+) -> None:
+    """No queue means no tenant, and this build will not invent one.
+
+    The transitional binding in ``review_api.dependencies`` reads the queue an
+    operator already created. When there is none it raises during startup, so
+    the process never begins answering requests about a queue it cannot name
+    -- rather than creating a default organization to keep itself running.
+    """
+    with pytest.raises(RuntimeError, match="No review queue is registered"):
+        with serve():
+            pass  # pragma: no cover - startup raises before the body runs
+
+
+def test_serving_a_database_with_two_review_queues_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_queue: Path,
+) -> None:
+    """Ambiguity is refused, not resolved by picking one.
+
+    These routes have no authenticated caller, so nothing in a request could
+    say which tenant it means. Serving one of the two arbitrarily would put
+    one organization's review evidence behind an unauthenticated endpoint.
+    """
+    assert create_organization(monkeypatch) == 0
+    for name in ("first", "second"):
+        assert (
+            run_command(
+                monkeypatch,
+                "create-review-queue",
+                "--organization",
+                ORGANIZATION_SLUG,
+                "--name",
+                name,
+            )
+            == 0
+        )
+
+    with pytest.raises(RuntimeError, match="2 review queues"):
+        with serve():
+            pass  # pragma: no cover - startup raises before the body runs
 
 
 def test_the_production_database_is_never_created() -> None:

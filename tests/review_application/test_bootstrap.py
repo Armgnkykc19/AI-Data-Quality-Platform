@@ -1,6 +1,6 @@
 """The production path that brings a review queue into existence.
 
-Every test here goes through ``register_review_queue`` against the real SQLite
+Every test here goes through ``register_review_workflow`` against the real SQLite
 repository, because the thing being checked is not that the function calls
 ``register_workflow`` -- it is that the Sprint 10 guarantees survive being
 driven by production code that regenerates its input from scratch.
@@ -30,9 +30,9 @@ from human_review.cases import generate_review_cases
 from human_review.models import HumanReviewDecision, ReviewStatus, ReviewWorkflowState
 from human_review.reporting import resolution_snapshot
 from review_application import (
-    ReviewQueueRegistration,
     ReviewQueueService,
-    register_review_queue,
+    ReviewWorkflowRegistration,
+    register_review_workflow,
 )
 from review_application.errors import (
     ReviewPersistenceError,
@@ -43,7 +43,7 @@ from review_persistence.sqlite.database import open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from tests.human_review.conftest import make_record
 from tests.review_application.conftest import ENTITY_RESOLUTION_CONFIG_PATH
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, bound_repository
 from tests.review_persistence.semantic_fixtures import make_suggestion
 
 
@@ -53,9 +53,9 @@ def bootstrap(
     resolution: ResolutionResult,
     *,
     config_path: str | None = ENTITY_RESOLUTION_CONFIG_PATH,
-) -> ReviewQueueRegistration:
+) -> ReviewWorkflowRegistration:
     """One production registration, spelled the way the CLI spells it."""
-    return register_review_queue(
+    return register_review_workflow(
         repository,
         state=state,
         entity_records=resolution.records,
@@ -170,13 +170,13 @@ def test_a_registered_queue_survives_a_restart(
     """Register, close the database entirely, reopen, and read it back."""
     first = open_review_database(persistence_config, clock=clock)
     try:
-        bootstrap(SqliteReviewCaseRepository(first, clock=clock), review_state, resolution)
+        bootstrap(bound_repository(first, clock), review_state, resolution)
     finally:
         first.close()
 
     second = open_review_database(persistence_config, clock=clock)
     try:
-        reopened = SqliteReviewCaseRepository(second, clock=clock)
+        reopened = bound_repository(second, clock)
         assert len(reopened.list_cases()) == len(review_state.cases)
         assert reopened.load_workflow_bundle().entity_records
     finally:

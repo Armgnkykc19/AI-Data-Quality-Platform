@@ -49,8 +49,11 @@ from semantic_review.models import (
     SemanticSuggestionType,
 )
 
-# Insert/select order for semantic_suggestions.
+# Insert/select order for semantic_suggestions, leading with the queue that
+# owns the row. A Sprint 09 suggestion id is a content address, so it is unique
+# per queue rather than per database; the column pair is what makes that true.
 SEMANTIC_SUGGESTION_COLUMNS: tuple[str, ...] = (
+    "review_queue_id",
     "suggestion_id",
     "review_case_id",
     "record_a_id",
@@ -153,6 +156,7 @@ def assert_is_sprint_09_suggestion(suggestion: object) -> SemanticSuggestion:
 def suggestion_to_row(
     suggestion: SemanticSuggestion,
     *,
+    review_queue_id: str,
     schema_version: str,
 ) -> tuple[Any, ...]:
     """Project a suggestion onto the semantic_suggestions column tuple.
@@ -163,6 +167,7 @@ def suggestion_to_row(
     way back.
     """
     return (
+        review_queue_id,
         suggestion.suggestion_id,
         suggestion.review_case_id,
         suggestion.record_a_id,

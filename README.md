@@ -92,7 +92,46 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete, Sprint 09 adds optional advisory semantic review, Sprint 10 persists the review queue, Sprint 11 serves it over a localhost REST API, and Sprint 12 adds the local Reviewer UI. The LLM is never an authority, and human review stays backend-authoritative.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete, Sprint 09 adds optional advisory semantic review, Sprint 10 persists the review queue, Sprint 11 serves it over a localhost REST API, Sprint 12 adds the local Reviewer UI, and Sprint 13 is adding multi-tenancy, starting with the persistence foundation. The LLM is never an authority, and human review stays backend-authoritative.
+
+## Sprint 13 (in progress)
+
+Sprint 13 adds authentication, organizations and tenant isolation. **Only the persistence foundation exists so far.** There is still no login, no session, no cookie, no authenticated HTTP route and no capability enforcement — the API remains the unauthenticated localhost tool Sprint 11 and 12 describe, and nothing in the browser has changed.
+
+What does exist is the ownership graph everything above it will hang from:
+
+```
+Organization
+  └── ReviewQueue
+        ├── ReviewWorkflowContext   (exactly one per queue)
+        └── ReviewCase
+              ├── ReviewCaseEvent
+              └── SemanticSuggestion
+
+User ──< OrganizationMembership >── Organization      (role: REVIEWER | VIEWER)
+```
+
+The review queue rather than the organization is the direct owner of review data, because the queue was already the boundary of the stored workflow context, of Sprint 08 MATCH authorization, of review-case identity and of registration idempotence. An organization may own several queues; each carries its own authorization graph, and a decision recorded in one never constrains another.
+
+**A review case id is unique within a queue, not globally.** `stable_review_case_id` derives it from the reviewed record pair, and record identifiers come from customer data, so two organizations produce the same `RC-...` routinely. Review tables are keyed by `(review_queue_id, review_case_id)`, and child tables reference that pair through composite foreign keys — so an event or a suggestion cannot point at a case in another queue.
+
+Identity lives in the `identity/` package: `User`, `Organization`, `OrganizationMembership` and `MembershipRole`, framework-free and unknown to `human_review`. No password is stored yet; credential material arrives with authentication, in its own table.
+
+### Database schema 2.0.0
+
+The review database is now schema **2.0.0**, and a 1.0.0 database cannot be opened: its review data belongs to no organization and no queue, so the process refuses to start rather than inventing an owner. Nothing is migrated automatically, no table is dropped, and no file is rewritten. The explicit operator migration command belongs to a later phase; a development database can be recreated instead.
+
+### Creating a tenant
+
+An organization is created by an operator, never by an HTTP request or as a side effect of registering a workflow:
+
+```bash
+python scripts/manage_human_review.py create-organization --slug acme --name "Acme Inc."
+python scripts/manage_human_review.py list-organizations
+python scripts/manage_human_review.py create-review-queue --organization acme --name default
+```
+
+Registering a workflow then names the tenant that owns it — see Sprint 11 below.
 
 ## Sprint 12
 
@@ -100,7 +139,7 @@ Sprint 12 adds the Reviewer UI: a local browser interface over the Sprint 11 rev
 
 It is a client and nothing more. The queue, the evidence, the advisory observations, the history and every decision rule stay behind the API — the browser renders what is published, submits one human decision, and re-reads the result. Human review remains backend-authoritative: Sprint 08 decides whether a `MATCH` is permitted, and the UI has no field, request or code path through which it could evaluate, weaken, or bypass that. Semantic suggestions are displayed as advisory observations and can never become a decision.
 
-**Local only, and not internet-ready.** There is no authentication, no verified reviewer identity, no organizations, and no tenant isolation. The reviewer label is an unverified audit string, not an account, and the interface does not store it. Identity and authorization arrive in Sprint 13; production serving and browser end-to-end testing in Sprint 14.
+**Local only, and not internet-ready.** There is no authentication and no verified reviewer identity. The reviewer label is an unverified audit string, not an account, and the interface does not store it. Sprint 13 has added organizations and tenant ownership in the database, but nothing on the HTTP surface or in the browser authenticates anybody yet; production serving and browser end-to-end testing arrive in Sprint 14.
 
 ### Prerequisites
 
@@ -178,12 +217,14 @@ Sprint 11 puts a read/resolve REST API in front of the Sprint 10 persistent revi
 Trusted workflow registration is an operator action, never an HTTP request: the context it writes is what Sprint 08 MATCH authorization is later evaluated against. There is no `POST /register`, no bootstrap endpoint, and no way to upload a workflow.
 
 ```bash
-python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo --register-review-queue
+python scripts/manage_human_review.py create-organization --slug acme --name "Acme Inc."
+python scripts/manage_human_review.py generate input.csv --report-dir human_review/reports/demo \
+    --register-review-queue --organization acme --review-queue default
 ```
 
-`--register-review-queue` is opt-in; without it `generate` writes the report and nothing durable. `--review-db PATH` overrides the target database for that run. The queue lives at `storage/review_queue.db`, configured in `configs/review_persistence.yaml`.
+`--register-review-queue` is opt-in; without it `generate` writes the report and nothing durable. `--organization` is required alongside it and must name an organization that already exists — the command will not create one, so a mistyped slug is an error (exit code 6) rather than a new tenant holding review data. `--review-queue` names the queue inside that organization, defaults to `default`, and is created on first use. `--review-db PATH` overrides the target database for that run. The queue lives at `storage/review_queue.db`, configured in `configs/review_persistence.yaml`.
 
-Re-running the command with the same input is an idempotent no-op: no case is duplicated, no history event is appended, and a case a reviewer has already resolved keeps its status, version and resolution. A changed record set, a changed AUTO_MATCH snapshot, or a different entity-resolution config path is refused with exit code 5, leaving the stored queue exactly as it was.
+Re-running the command with the same input is an idempotent no-op **within that queue**: no case is duplicated, no history event is appended, and a case a reviewer has already resolved keeps its status, version and resolution. A changed record set, a changed AUTO_MATCH snapshot, or a different entity-resolution config path is refused with exit code 5, leaving the stored queue exactly as it was. Registering the same workflow into a different queue is independent of all of that.
 
 ### 2. Serve the reviewer API
 
@@ -195,7 +236,9 @@ Needs `fastapi`, `pydantic` and `uvicorn`, declared together as the `api` extra 
 
 Defaults to `http://127.0.0.1:8000` with one worker and no reloader; `--host` accepts loopback addresses only (`127.0.0.1`, `localhost`, `::1`) and `--port` sets the port. Register a queue first — the runner refuses to start against a database that does not exist rather than creating an empty one that would look like a fully reviewed queue.
 
-That check is file existence and nothing more. A database that exists but has never had a workflow registered still starts and serves an empty queue; it refuses every decision with `503 REVIEW_QUEUE_NOT_READY` rather than authorizing against a context that was never stored. Distinguishing the two at startup is not possible through the Sprint 10 repository contract, so bootstrap-before-use is a documented step rather than an enforced one.
+Because these routes still have no authenticated caller, the server serves exactly one review queue and resolves it once at startup: it reads the queues an operator already created, and refuses to start when there are none or more than one. It never creates an organization or a queue of its own, and no part of a request can influence which queue is served. That binding is explicitly temporary and is removed when authenticated, tenant-scoped routes land.
+
+A queue that exists but has never had a workflow registered still starts and serves an empty page; it refuses every decision with `503 REVIEW_QUEUE_NOT_READY` rather than authorizing against a context that was never stored.
 
 Liveness is `GET /health`, which returns `{"status": "ok"}` and reports nothing about storage. The reviewer endpoints are under `/api/v1/review-cases`, and the generated OpenAPI schema is served at `/openapi.json`:
 

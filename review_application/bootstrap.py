@@ -1,15 +1,29 @@
-"""Registering a generated workflow into the durable review queue.
+"""Registering a generated workflow into one durable review queue.
 
 This is the operator-side counterpart to ``ReviewQueueService``: that one applies
-a decision to a queue, this one brings the queue into existence. Both are thin,
-and for the same reason -- every rule about what a review case is, and which
-AUTO_MATCH edges authorize a merge, already lives in Sprint 08.
+a decision to a queue, this one fills a queue with the cases to decide. Both are
+thin, and for the same reason -- every rule about what a review case is, and
+which AUTO_MATCH edges authorize a merge, already lives in Sprint 08.
 
 So nothing here builds a ``ReviewCase``, a context payload, or an AUTO_MATCH
 pair. The caller hands over what the deterministic pipeline already produced,
 this function asks ``human_review.reporting.resolution_snapshot`` for the same
 reduction Sprint 08 writes into its own report, and passes both to
 ``register_workflow``. One snapshot implementation, one registration primitive.
+
+**Which queue is not a parameter here.** The repository handed in is already
+bound to exactly one, and everything this function relies on is therefore
+queue-local: the context fingerprint it compares against, the idempotence of
+re-registering a case, and the conflict raised when a stored context disagrees.
+Registering an identical workflow into a second queue is a first registration
+there, not a replay -- two organizations that happen to generate the same
+workflow are independent and cannot observe one another.
+
+The function is named for what it does: it registers a *workflow* into a queue
+that already exists. It does not create the queue, and it must not -- a review
+queue is owned by an organization, and manufacturing one here would mean a
+misspelled slug quietly producing review data owned by nobody. Creating the
+queue is an explicit operator step.
 
 The safety properties are Sprint 10's and are consumed rather than restated
 here: context and cases commit together, re-registering an identical workflow
@@ -41,11 +55,11 @@ from review_application.repository import ReviewCaseRepository
 
 
 @dataclass(frozen=True)
-class ReviewQueueRegistration:
-    """What one registration found and what it changed.
+class ReviewWorkflowRegistration:
+    """What one registration found and what it changed, in one queue.
 
     Deliberately counts only. An operator needs to know whether the command
-    created a queue or confirmed an existing one, and how much of it is still
+    filled a queue or confirmed an existing one, and how much of it is still
     waiting for a reviewer -- not what is in any particular case.
     """
 
@@ -65,7 +79,7 @@ class ReviewQueueRegistration:
         return self.total_cases > 0 and self.newly_registered == 0
 
 
-def register_review_queue(
+def register_review_workflow(
     repository: ReviewCaseRepository,
     *,
     state: ReviewWorkflowState,
@@ -73,7 +87,7 @@ def register_review_queue(
     resolution: ResolutionResult,
     entity_resolution_config_path: str | None = None,
     now_utc: str | None = None,
-) -> ReviewQueueRegistration:
+) -> ReviewWorkflowRegistration:
     """Register a generated workflow and report what the queue now holds.
 
     ``resolution`` is reduced to the Sprint 08 AUTO_MATCH snapshot here rather
@@ -83,7 +97,9 @@ def register_review_queue(
     The count of pre-existing cases is read before registering. That read is not
     part of the safety story -- ``register_workflow`` is atomic and idempotent on
     its own -- it exists only so the operator can be told whether this run
-    created the queue or confirmed one that was already there.
+    filled the queue or confirmed one that was already there. It counts only
+    the bound queue's cases, so a busy installation does not make a fresh
+    queue look pre-populated.
 
     A workflow with no review cases is registered as a valid empty queue: the
     entity records and the AUTO_MATCH snapshot are still the authorization
@@ -91,9 +107,10 @@ def register_review_queue(
     a first registration. Registering without any entity records is refused by
     the repository, because MATCH authorization would fail closed forever after.
 
-    Propagates ``ReviewWorkflowContextConflictError``,
-    ``DuplicateCaseRegistrationError`` and ``ReviewPersistenceError`` unchanged.
-    Every one of them means the stored queue was left exactly as it was.
+    Propagates ``ReviewQueueNotFoundError``,
+    ``ReviewWorkflowContextConflictError``, ``DuplicateCaseRegistrationError``
+    and ``ReviewPersistenceError`` unchanged. Every one of them means the
+    stored queue was left exactly as it was.
     """
     already_present = len(repository.list_cases())
 
@@ -111,9 +128,9 @@ def _summarize(
     stored: Sequence[PersistedCase],
     *,
     already_present: int,
-) -> ReviewQueueRegistration:
+) -> ReviewWorkflowRegistration:
     pending = sum(1 for case in stored if case.status is ReviewStatus.PENDING)
-    return ReviewQueueRegistration(
+    return ReviewWorkflowRegistration(
         total_cases=len(stored),
         # Clamped rather than subtracted blindly: registration never deletes a
         # case, so a negative difference would mean the count is measuring

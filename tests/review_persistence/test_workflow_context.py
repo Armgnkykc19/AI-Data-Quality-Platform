@@ -20,13 +20,13 @@ from review_application.errors import (
     ReviewWorkflowContextMissingError,
 )
 from review_application.models import WorkflowBundle
+from review_application.queues import ReviewQueue
 from review_persistence.schema import (
     ALL_TABLES,
     CREATE_REVIEW_WORKFLOW_CONTEXT,
     DATABASE_SCHEMA_VERSION,
     REVIEW_WORKFLOW_CONTEXT_TABLE,
     SUPPORTED_DATABASE_SCHEMA_VERSIONS,
-    WORKFLOW_CONTEXT_ID,
 )
 from review_persistence.sqlite.context_mapper import (
     canonical_json,
@@ -93,24 +93,48 @@ def test_workflow_context_table_exists(database: ReviewDatabase) -> None:
     assert tables == set(ALL_TABLES)
 
 
-def test_workflow_context_is_a_singleton(database: ReviewDatabase) -> None:
-    # One database is one review queue, so a second context row would mean two
-    # authorization graphs competing over the same cases.
-    assert re.search(r"CHECK \(context_id = 1\)", CREATE_REVIEW_WORKFLOW_CONTEXT)
+def test_workflow_context_is_one_per_queue(
+    database: ReviewDatabase,
+    review_queue: ReviewQueue,
+    second_review_queue: ReviewQueue,
+) -> None:
+    """One context per queue -- not one per database, which 1.0.0 enforced.
+
+    A second context row for the same queue would mean two authorization graphs
+    competing over the same cases. A context row for a *different* queue is an
+    entirely separate workflow and must be allowed, which is exactly what the
+    old ``CHECK (context_id = 1)`` made impossible.
+    """
+    assert re.search(r"review_queue_id TEXT PRIMARY KEY", CREATE_REVIEW_WORKFLOW_CONTEXT)
 
     connection = database.connect()
-    connection.execute(
-        f"INSERT INTO {REVIEW_WORKFLOW_CONTEXT_TABLE} (context_id, entity_records_json, "
+    insert = (
+        f"INSERT INTO {REVIEW_WORKFLOW_CONTEXT_TABLE} (review_queue_id, entity_records_json, "
         "resolution_snapshot_json, schema_version, created_at_utc, updated_at_utc) "
-        "VALUES (1, '[]', '{}', ?, 'now', 'now')",
-        (DATABASE_SCHEMA_VERSION,),
+        "VALUES (?, '[]', '{}', ?, 'now', 'now')"
     )
+    connection.execute(insert, (review_queue.review_queue_id, DATABASE_SCHEMA_VERSION))
+
+    # A different queue: independent, and accepted.
+    connection.execute(insert, (second_review_queue.review_queue_id, DATABASE_SCHEMA_VERSION))
+
+    # The same queue again: refused by the primary key.
     with pytest.raises(sqlite3.IntegrityError):
-        connection.execute(
-            f"INSERT INTO {REVIEW_WORKFLOW_CONTEXT_TABLE} (context_id, entity_records_json, "
-            "resolution_snapshot_json, schema_version, created_at_utc, updated_at_utc) "
-            "VALUES (2, '[]', '{}', ?, 'now', 'now')",
-            (DATABASE_SCHEMA_VERSION,),
+        connection.execute(insert, (review_queue.review_queue_id, DATABASE_SCHEMA_VERSION))
+
+
+def test_workflow_context_requires_an_existing_queue(database: ReviewDatabase) -> None:
+    """Tenant ownership is a foreign key, not a convention.
+
+    A context row naming a queue that does not exist would be an authorization
+    graph owned by no organization.
+    """
+    with pytest.raises(sqlite3.IntegrityError):
+        database.connect().execute(
+            f"INSERT INTO {REVIEW_WORKFLOW_CONTEXT_TABLE} (review_queue_id, "
+            "entity_records_json, resolution_snapshot_json, schema_version, "
+            "created_at_utc, updated_at_utc) VALUES (?, '[]', '{}', ?, 'now', 'now')",
+            ("RQ-never-created", DATABASE_SCHEMA_VERSION),
         )
 
 
@@ -150,11 +174,12 @@ def test_workflow_context_declares_no_forbidden_data(
     assert not re.search(pattern, CREATE_REVIEW_WORKFLOW_CONTEXT, re.IGNORECASE)
 
 
-def test_schema_version_is_still_the_initial_unreleased_version() -> None:
-    # No Sprint 10 database has been released, so adding this table is part of
-    # the initial schema, not a migration from an older one.
-    assert DATABASE_SCHEMA_VERSION == "1.0.0"
-    assert SUPPORTED_DATABASE_SCHEMA_VERSIONS == frozenset({"1.0.0"})
+def test_schema_version_is_the_tenant_ownership_version() -> None:
+    # 2.0.0 is the version that moved review ownership under review_queues.
+    # A 1.0.0 database cannot be served by this build and is never upgraded in
+    # place; see tests/review_persistence/test_schema_version.py.
+    assert DATABASE_SCHEMA_VERSION == "2.0.0"
+    assert SUPPORTED_DATABASE_SCHEMA_VERSIONS == frozenset({"2.0.0"})
 
 
 # --------------------------------------------------------------------------
@@ -209,7 +234,8 @@ def test_stored_json_is_canonical(
         database.connect()
         .execute(
             f"SELECT entity_records_json, resolution_snapshot_json FROM "
-            f"{REVIEW_WORKFLOW_CONTEXT_TABLE} WHERE context_id = {WORKFLOW_CONTEXT_ID}"
+            f"{REVIEW_WORKFLOW_CONTEXT_TABLE} WHERE review_queue_id = ?",
+            (repository.review_queue_id,),
         )
         .fetchone()
     )

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from review_application.errors import ReviewPersistenceError
+from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.schema import ALL_TABLES, DATABASE_SCHEMA_VERSION
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
@@ -114,19 +115,22 @@ def test_connection_uses_a_named_row_factory(database: ReviewDatabase) -> None:
     assert row["schema_version"] == DATABASE_SCHEMA_VERSION
 
 
-def test_transaction_rolls_back_on_failure(database: ReviewDatabase) -> None:
+def test_transaction_rolls_back_on_failure(
+    database: ReviewDatabase,
+    review_queue: ReviewQueue,
+) -> None:
     connection = database.connect()
 
     with pytest.raises(RuntimeError):
         with database.transaction() as conn:
             conn.execute(
                 "INSERT INTO review_cases ("
-                "review_case_id, record_a_id, record_b_id, status, machine_decision, "
-                "machine_score, version, case_payload_json, schema_version, "
-                "created_at_utc, updated_at_utc"
-                ") VALUES ('RC-rollback', 'a-1', 'a-2', 'PENDING', 'REVIEW', 0.8, 1, "
+                "review_queue_id, review_case_id, record_a_id, record_b_id, status, "
+                "machine_decision, machine_score, version, case_payload_json, "
+                "schema_version, created_at_utc, updated_at_utc"
+                ") VALUES (?, 'RC-rollback', 'a-1', 'a-2', 'PENDING', 'REVIEW', 0.8, 1, "
                 "'{}', ?, '2026-09-12T08:00:00Z', '2026-09-12T08:00:00Z')",
-                (DATABASE_SCHEMA_VERSION,),
+                (review_queue.review_queue_id, DATABASE_SCHEMA_VERSION),
             )
             raise RuntimeError("boom")
 

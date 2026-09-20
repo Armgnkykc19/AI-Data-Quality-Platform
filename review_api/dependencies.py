@@ -13,10 +13,16 @@ one. The database is opened when the server begins serving and closed when it
 stops.
 
 ``open_review_database`` validates the stored schema version and fails closed on
-a version this build does not understand. Because that happens during startup,
-such a process refuses to start rather than answering requests about a queue it
-cannot read -- which is also why ``GET /health`` does not need to ask about
-storage.
+a version this build does not understand -- including a pre-tenancy 1.0.0
+database, which is refused with a migration-required error rather than upgraded.
+Because that happens during startup, such a process refuses to start rather than
+answering requests about a queue it cannot read -- which is also why
+``GET /health`` does not need to ask about storage.
+
+The repository this module builds is bound to one review queue, resolved once
+at startup by ``resolve_sole_review_queue``. That resolution is explicitly
+transitional and is documented as such on the function; it exists because these
+routes still have no authenticated caller to resolve a tenant from.
 
 A temporary runtime constraint, stated plainly because it shapes every route:
 ``ReviewDatabase`` holds a single ``sqlite3`` connection, and a ``sqlite3``
@@ -42,9 +48,14 @@ from typing import TypeVar
 from fastapi import FastAPI
 from starlette.requests import Request
 
-from review_application import ReviewCaseRepository, ReviewQueueService
+from review_application import ReviewCaseRepository, ReviewQueue, ReviewQueueService
 from review_persistence import load_review_persistence_config
-from review_persistence.sqlite import SqliteReviewCaseRepository, open_review_database
+from review_persistence.sqlite import (
+    ReviewDatabase,
+    SqliteReviewCaseRepository,
+    SqliteTenantRepository,
+    open_review_database,
+)
 
 _T = TypeVar("_T")
 
@@ -61,7 +72,10 @@ async def production_lifespan(app: FastAPI) -> AsyncIterator[None]:
     config = load_review_persistence_config()
     database = open_review_database(config)
     try:
-        repository = SqliteReviewCaseRepository(database)
+        repository = SqliteReviewCaseRepository(
+            database,
+            review_queue_id=resolve_sole_review_queue(database).review_queue_id,
+        )
         app.state.repository = repository
         app.state.service = ReviewQueueService(repository)
         yield
@@ -71,6 +85,51 @@ async def production_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.repository = None
         app.state.service = None
         database.close()
+
+
+def resolve_sole_review_queue(database: ReviewDatabase) -> ReviewQueue:
+    """Find the one queue this unauthenticated build is allowed to serve.
+
+    TRANSITIONAL. This function exists only because the HTTP surface has no
+    authenticated caller yet, and it is deleted in the phase that adds one.
+    Its replacement is already decided: a request's queue will be resolved from
+    a verified session and organization membership, through a tenant scope,
+    with the organization and queue named explicitly in the URL. Nothing in
+    that design needs an installation-wide lookup, so this is the whole of the
+    temporary code and there is exactly one line to remove.
+
+    Three properties make it safe to ship in the meantime.
+
+    It **creates nothing**. There is no default organization, no default queue,
+    and no fallback: it reads what an operator already created and refuses if
+    that is not exactly one thing. A build that invented a tenant to keep
+    itself running would be a hidden production tenant, which is precisely what
+    this must not become.
+
+    It **takes nothing from a caller**. The queue is discovered once, at
+    startup, from storage. No header, no path, no query parameter, and no
+    request body influences it, so the current routes cannot be steered at a
+    tenant even in principle.
+
+    It **refuses ambiguity**. More than one queue means the installation has
+    grown past what an API with no caller identity can serve, and the honest
+    answer is to fail to start rather than to pick one. Zero means the operator
+    has not bootstrapped yet. Both raise here, during startup, so the process
+    never begins answering requests about a queue it cannot name.
+    """
+    queues = SqliteTenantRepository(database).list_all_review_queues()
+    if not queues:
+        raise RuntimeError(
+            "No review queue is registered in this database. Create an organization "
+            "and register a workflow before serving; this build will not invent one."
+        )
+    if len(queues) > 1:
+        raise RuntimeError(
+            f"This database holds {len(queues)} review queues, and this build has no "
+            "authenticated caller that could choose between them. Refusing to serve one "
+            "arbitrarily."
+        )
+    return queues[0]
 
 
 def configured_database_path() -> Path:
