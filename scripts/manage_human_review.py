@@ -49,6 +49,7 @@ from review_application import (  # noqa: E402
 # the Sprint 10 SQLite database. ``register_review_workflow`` above it only ever
 # sees the repository Protocol.
 from review_persistence import load_review_persistence_config  # noqa: E402
+from review_persistence.integrity import verify_review_queue  # noqa: E402
 from review_persistence.sqlite import (  # noqa: E402
     ReviewDatabase,
     SqliteReviewCaseRepository,
@@ -64,6 +65,10 @@ EXIT_REPORT = 3
 EXIT_POLICY = 4
 EXIT_REGISTRATION_REFUSED = 5
 EXIT_TENANT_REFUSED = 6
+# A queue that was found and read successfully, and is not coherent. Distinct
+# from every code above because nothing was refused and nothing failed: the
+# command did exactly what it was asked and the answer is bad news.
+EXIT_INTEGRITY_FAILED = 7
 
 
 def _add_review_db_argument(parser: argparse.ArgumentParser) -> None:
@@ -85,7 +90,8 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Exit codes: 0 success, 1 usage, 2 ingestion, "
             "3 report/IO error, 4 human-review policy rejection, "
-            "5 review queue registration refused, 6 organization/tenant refused."
+            "5 review queue registration refused, 6 organization/tenant refused, "
+            "7 queue integrity findings."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -150,6 +156,23 @@ def parse_args() -> argparse.Namespace:
     create_queue_parser.add_argument("--name", type=str, required=True)
     _add_review_db_argument(create_queue_parser)
 
+    # Verify, never repair. The queue is named the same way every other queue
+    # operation names one -- organization slug plus queue name -- so an operator
+    # does not have to know an opaque id to check their own data.
+    verify_queue_parser = subparsers.add_parser(
+        "verify-queue",
+        help="Check one review queue's integrity. Read-only; repairs nothing.",
+        description=(
+            "Reports whether a review queue is coherent: its ownership, its expected "
+            "indexes, the queue-global resolution_sequence invariant, its history, and "
+            "whether the Sprint 08 authorization bundle can be reconstructed. It writes "
+            "nothing, renumbers nothing, and fixes nothing."
+        ),
+    )
+    verify_queue_parser.add_argument("--organization", type=str, required=True)
+    verify_queue_parser.add_argument("--review-queue", type=str, required=True)
+    _add_review_db_argument(verify_queue_parser)
+
     generate_parser = subparsers.add_parser(
         "generate", help="Generate review cases from input data."
     )
@@ -196,7 +219,26 @@ def parse_args() -> argparse.Namespace:
     inspect_parser.add_argument("report_path", type=Path)
     inspect_parser.add_argument("review_case_id", type=str)
 
-    resolve_parser = subparsers.add_parser("resolve", help="Apply a human review decision.")
+    # Retained only to refuse. This subcommand used to resolve a review case
+    # inside a JSON report and write a new report, which made the report a
+    # second authoritative record of human decisions alongside the SQLite queue
+    # -- and the two never learned about each other. A NO_MATCH recorded here
+    # was invisible to the queue, so it did not constrain a later MATCH the way
+    # Sprint 08 transitive safety says a NO_MATCH must.
+    #
+    # It keeps its original arguments so an existing invocation still parses and
+    # gets an explanation naming the authoritative path, rather than argparse's
+    # "invalid choice" for a command that used to work. It never resolves
+    # anything and never writes a report.
+    resolve_parser = subparsers.add_parser(
+        "resolve",
+        help="Removed. Resolve through the authenticated review API instead.",
+        description=(
+            "Removed in Sprint 14 Phase A. Resolving inside a JSON report made the "
+            "report a second authoritative store of human decisions, invisible to the "
+            "durable review queue that Sprint 08 authorization is evaluated against."
+        ),
+    )
     resolve_parser.add_argument("report_path", type=Path)
     resolve_parser.add_argument("review_case_id", type=str)
     resolve_parser.add_argument(
@@ -535,6 +577,92 @@ def _create_review_queue(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _verify_queue(args: argparse.Namespace) -> int:
+    """Report one queue's integrity and exit 0 only when it is clean.
+
+    The exit code is the contract: 0 for a healthy queue,
+    ``EXIT_INTEGRITY_FAILED`` for one with findings, and the existing tenant
+    exit code for a name that does not resolve. That makes the command usable
+    from a script without parsing its output.
+
+    Every line printed is an identifier, a count, a code or a sentence this
+    codebase wrote. No record value, reviewer label or context payload reaches
+    the terminal -- an integrity report is something an operator pastes into an
+    issue.
+    """
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        tenants = SqliteTenantRepository(database)
+        organization = _require_organization(tenants, args.organization)
+        queue = _require_review_queue(tenants, organization=organization, name=args.review_queue)
+        report = verify_review_queue(database, review_queue_id=queue.review_queue_id)
+    finally:
+        database.close()
+
+    print(f"Database: {database_path}")
+    print(f"Organization: {organization.slug} ({organization.organization_id})")
+    print(f"Review queue: {queue.name} ({queue.review_queue_id})")
+    print(f"Checks run: {len(report.checks_run)}")
+    for check in report.checks_run:
+        print(f"  - {check}")
+
+    if report.ok:
+        print("Result: OK. No integrity findings.")
+        return EXIT_OK
+
+    print(f"Result: {len(report.findings)} integrity finding(s).")
+    for finding in report.findings:
+        print(f"  [{finding.code}] {finding.detail}")
+    print("Nothing was modified. This command verifies; it does not repair.")
+    return EXIT_INTEGRITY_FAILED
+
+
+def _refuse_report_resolution() -> int:
+    """Explain that report-based resolution is gone, and name what replaced it.
+
+    The old behaviour resolved a case inside a loaded JSON report and wrote a
+    new report. Nothing about that was wrong in isolation; what was wrong was
+    that it created a *second* authoritative record of human decisions.
+
+    Sprint 08 authorization is evaluated against one queue: a MATCH is refused
+    when it would transitively contradict a recorded NO_MATCH anywhere in the
+    same component. That check reads the durable queue. A NO_MATCH that existed
+    only inside a JSON file was therefore invisible to it, so the
+    transitive-safety guarantee was true of each store separately and false of
+    the system.
+
+    There is now one authoritative store, and one path into it:
+    ``ReviewQueueService`` -> ``ReviewWorkflow`` -> Sprint 08 authorization ->
+    SQLite. Reports remain an export -- ``list`` and ``inspect`` still read them
+    -- and are no longer a place decisions are made.
+
+    No CLI replacement is offered here rather than rerouted through the service,
+    and that is deliberate. A resolution now carries a server-derived reviewer
+    identity and passes tenant authorization: an operator command that resolved
+    cases would need its own answer to which authenticated user is deciding and
+    whether their membership permits it, which is a new privileged write path
+    with its own security design. Phase A closes a second authority; it does not
+    open a third.
+    """
+    print("'resolve' was removed in Sprint 14 Phase A. Nothing was resolved and no report")
+    print("was written.")
+    print()
+    print("Resolving inside a JSON report made that report a second authoritative store of")
+    print("human decisions. Sprint 08 MATCH authorization is evaluated against one durable")
+    print("queue, so a NO_MATCH recorded only in a report did not constrain a later MATCH,")
+    print("and the transitive-safety guarantee held for each store but not for the system.")
+    print()
+    print("Resolve through the authenticated review API, which is the one path that reaches")
+    print("the authoritative queue:")
+    print()
+    print("  POST /api/v1/organizations/{organization_id}/review-queues/{review_queue_id}")
+    print("       /review-cases/{review_case_id}/resolve")
+    print()
+    print("Start it with 'python -m review_api'. Reports are still an export: use 'list' and")
+    print("'inspect' to read one.")
+    return EXIT_USAGE
+
+
 def _generate(args: argparse.Namespace) -> int:
     ingestion_config = load_ingestion_config(args.ingestion_config)
     resolution_config = load_entity_resolution_config(args.entity_resolution_config)
@@ -577,6 +705,8 @@ def main() -> int:
             return _add_membership(args)
         if args.command == "create-review-queue":
             return _create_review_queue(args)
+        if args.command == "verify-queue":
+            return _verify_queue(args)
 
         if args.command == "generate":
             if args.review_db is not None and not args.register_review_queue:
@@ -597,6 +727,12 @@ def main() -> int:
                 return EXIT_USAGE
             return _generate(args)
 
+        if args.command == "resolve":
+            # Refused before the report is even read. The operator's problem is
+            # not their arguments, so validating them further would only delay
+            # the one thing they need to know.
+            return _refuse_report_resolution()
+
         loaded = load_human_review_report(args.report_path)
         workflow = ReviewWorkflow(loaded.outcome.workflow_state)
         if args.command == "list":
@@ -610,48 +746,6 @@ def main() -> int:
         if args.command == "inspect":
             case = workflow.get_case(args.review_case_id)
             print(json.dumps(case.to_dict(), indent=2, ensure_ascii=False))
-            return EXIT_OK
-
-        if args.command == "resolve":
-            config_path = (
-                Path(loaded.entity_resolution_config_path)
-                if loaded.entity_resolution_config_path
-                else args.entity_resolution_config
-            )
-            resolution_config = load_entity_resolution_config(config_path)
-            decision = HumanReviewDecision(args.decision)
-            records_by_id = {record.record_id: record for record in loaded.entity_records}
-            if not records_by_id:
-                raise HumanReviewReportError(
-                    "Persisted review report is missing entity records required for authorization."
-                )
-            if decision == HumanReviewDecision.MATCH:
-                case = workflow.get_case(args.review_case_id)
-                if (
-                    case.pair.record_a_id not in records_by_id
-                    or case.pair.record_b_id not in records_by_id
-                ):
-                    raise HumanReviewReportError(
-                        "Persisted review report cannot reconstruct MATCH authorization "
-                        "context for the reviewed records."
-                    )
-            workflow.resolve_case(
-                args.review_case_id,
-                decision=decision,
-                reviewer_id=args.reviewer_id,
-                resolution=loaded.resolution,
-                records_by_id=records_by_id,
-                entity_resolution_config=resolution_config,
-            )
-            report_path = write_review_reports(
-                workflow.to_outcome(),
-                output_directory=args.output_report_dir,
-                entity_records=loaded.entity_records,
-                resolution=loaded.resolution,
-                entity_resolution_config_path=config_path,
-            )
-            print(f"Resolved {args.review_case_id} as {args.decision}.")
-            print(f"Report: {report_path}")
             return EXIT_OK
 
         return EXIT_USAGE

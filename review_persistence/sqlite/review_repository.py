@@ -42,14 +42,17 @@ authorization-incomplete view.
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 from entity_resolution.models import EntityRecord
 from human_review.errors import ReviewCaseNotFoundError
 from human_review.models import ReviewCase, ReviewStatus, ReviewWorkflowState
+from identity.errors import OrganizationNotActiveError
 from identity.ids import assert_opaque_id
+from identity.models import OrganizationStatus
 from review_application.errors import (
     DuplicateCaseRegistrationError,
     PersistedCaseIntegrityError,
@@ -70,7 +73,7 @@ from review_application.models import (
     WorkflowBundle,
 )
 from review_application.queues import REVIEW_QUEUE_ID_PREFIX
-from review_persistence.identity_schema import REVIEW_QUEUES_TABLE
+from review_persistence.identity_schema import ORGANIZATIONS_TABLE, REVIEW_QUEUES_TABLE
 from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
     REVIEW_CASE_EVENTS_TABLE,
@@ -144,7 +147,19 @@ _SELECT_CONTEXT = (
     "WHERE review_queue_id = ?"
 )
 
-_SELECT_QUEUE = f"SELECT review_queue_id FROM {REVIEW_QUEUES_TABLE} WHERE review_queue_id = ?"
+# The queue plus the status of the organization that owns it, in one read.
+# Ownership is what makes review data belong to a tenant at all, so the two
+# facts a registration needs -- does this queue exist, and may its tenant be
+# worked in -- are answered from one row rather than from two reads that could
+# describe different moments. An INNER JOIN is correct rather than convenient:
+# the foreign key makes an orphaned queue unrepresentable, so a queue with no
+# organization row is not a case to handle but a database that is already wrong.
+_SELECT_QUEUE_WITH_ORGANIZATION = (
+    f"SELECT q.review_queue_id AS review_queue_id, o.status AS organization_status "
+    f"FROM {REVIEW_QUEUES_TABLE} AS q "
+    f"JOIN {ORGANIZATIONS_TABLE} AS o ON o.organization_id = q.organization_id "
+    "WHERE q.review_queue_id = ?"
+)
 
 # The compare-and-swap. The version in the WHERE clause is the whole protection:
 # a reviewer whose expected_version has since been superseded matches no row, so
@@ -187,6 +202,35 @@ _SELECT_SUGGESTIONS = (
 # time information. created_at_utc first gives observation order; the id breaks
 # ties between two recorded in the same second. Neither confers authority.
 _SUGGESTION_ORDER = " ORDER BY created_at_utc ASC, suggestion_id ASC"
+
+
+def _assert_registrable(case: ReviewCase) -> None:
+    """Registration stores new work. It does not record decisions.
+
+    ``generate_review_cases`` is deterministic and always emits the PENDING
+    form of every case, so a resolved case arriving at a registration
+    primitive never came from the supported pipeline.
+
+    Refusing it closes a real bypass. Registration inserts at version 1 with no
+    resolution event, and ``review_application.history`` reads "resolved case,
+    no event" as a legitimate import from before the event table existed. So a
+    resolved ``ReviewCase`` inserted here would become durable, readable
+    history that never passed
+    ``assert_human_match_authorization_boundary`` -- a MATCH nobody authorized,
+    indistinguishable afterwards from one that was. ``apply_resolution`` exists
+    to be the only way a status changes, and its own guard is the mirror of
+    this one: it refuses a case that is *still* PENDING.
+
+    Resolved historical import is deliberately not offered. If it is ever
+    genuinely needed it wants its own named, explicitly high-risk entry point,
+    not a widened meaning for the primitive every ordinary registration uses.
+    """
+    if case.status is not ReviewStatus.PENDING:
+        raise PersistedCaseIntegrityError(
+            f"Review case {case.review_case_id} is {case.status.value}; registration "
+            "stores PENDING cases only. A decision may be persisted only by "
+            "apply_resolution, from a case ReviewWorkflow.resolve_case produced."
+        )
 
 
 @dataclass(frozen=True)
@@ -248,6 +292,27 @@ class SqliteReviewCaseRepository:
         """The one queue this repository can read or write. Never reassigned."""
         return self._review_queue_id
 
+    # -- serialized write scope --------------------------------------------
+
+    @contextmanager
+    def unit_of_work(self) -> Iterator[None]:
+        """One IMMEDIATE transaction spanning every call made inside it.
+
+        IMMEDIATE takes the write lock at the start rather than on the first
+        write, which is the property that matters here: the bundle a caller
+        loads inside this scope cannot change before the resolution computed
+        from it commits, because no other writer can be in between.
+
+        ``ReviewDatabase.transaction`` is reentrant, so the methods below keep
+        taking their own transactions and simply join this one. Nothing had to
+        learn whether it was called first.
+
+        Yields ``None`` on purpose. The application layer bounds a scope with
+        this; handing it the connection would hand it SQL.
+        """
+        with self._database.transaction():
+            yield None
+
     # -- workflow registration ---------------------------------------------
 
     def register_workflow(
@@ -288,13 +353,21 @@ class SqliteReviewCaseRepository:
         records_payload = entity_records_to_payload(records)
         snapshot_payload = snapshot_to_payload(resolution_snapshot)
         self._assert_records_cover_cases(state, records)
+        # Checked for the whole batch before the transaction opens, for the same
+        # reason record coverage is: one unregistrable case makes the whole
+        # workflow unregistrable, and an operator is better told that before any
+        # lock is taken. ``_register_case_in`` enforces it again per case, which
+        # is what covers ``register_case`` and makes the rollback below the
+        # atomicity guarantee rather than this loop.
+        for case in state.cases:
+            _assert_registrable(case)
 
         with self._database.transaction() as connection:
             # Checked inside the transaction and before anything is written.
             # The foreign key would refuse the rows anyway, but as a bare
             # IntegrityError; an operator addressing a queue that does not
             # exist deserves to be told that, not a constraint name.
-            self._assert_queue_exists(connection)
+            self._assert_queue_accepts_registration(connection)
             timestamp = now_utc if now_utc is not None else utc_timestamp(self._clock)
             self._store_context(
                 connection,
@@ -307,17 +380,40 @@ class SqliteReviewCaseRepository:
                 self._register_case_in(connection, case, timestamp) for case in state.cases
             )
 
-    def _assert_queue_exists(self, connection: sqlite3.Connection) -> None:
-        """Refuse to write review data into a queue nobody created.
+    def _assert_queue_accepts_registration(self, connection: sqlite3.Connection) -> None:
+        """Refuse to write review data into a queue that may not receive it.
 
-        With tenant ownership flowing through the queue, a case whose queue is
-        absent would be review data owned by no organization at all.
+        Two conditions, and they fail differently on purpose.
+
+        The queue must exist. With tenant ownership flowing through the queue, a
+        case whose queue is absent would be review data owned by no
+        organization at all.
+
+        The owning organization must also be ACTIVE. Registering a workflow is
+        ordinary business work, and a suspended tenant is one whose queues may
+        not be worked on -- the same policy ``review_api.tenancy`` applies to
+        every HTTP request, enforced here so that suspension does not mean
+        merely "unreachable over HTTP" while an operator command keeps filling
+        the queue up. Nothing already stored is touched or invalidated.
+
+        Both run inside the caller's IMMEDIATE transaction, so neither answer
+        can change before the rows this guards are written.
         """
-        row = connection.execute(_SELECT_QUEUE, (self._review_queue_id,)).fetchone()
+        row = connection.execute(
+            _SELECT_QUEUE_WITH_ORGANIZATION, (self._review_queue_id,)
+        ).fetchone()
         if row is None:
             raise ReviewQueueNotFoundError(
                 f"Review queue {self._review_queue_id} is not stored. Create the queue "
                 "through the operator bootstrap path before registering a workflow into it."
+            )
+        status = OrganizationStatus(str(row["organization_status"]))
+        if status is not OrganizationStatus.ACTIVE:
+            raise OrganizationNotActiveError(
+                f"Review queue {self._review_queue_id} belongs to an organization that is "
+                f"{status.value}, not ACTIVE. Registering a workflow is ordinary business "
+                "work and is refused in a suspended organization. Nothing already stored "
+                "in the queue has been changed."
             )
 
     @staticmethod
@@ -409,7 +505,7 @@ class SqliteReviewCaseRepository:
         the missing authorization material.
         """
         with self._database.transaction() as connection:
-            self._assert_queue_exists(connection)
+            self._assert_queue_accepts_registration(connection)
             timestamp = now_utc if now_utc is not None else utc_timestamp(self._clock)
             return self._register_case_in(connection, case, timestamp)
 
@@ -420,6 +516,7 @@ class SqliteReviewCaseRepository:
         timestamp: str,
     ) -> PersistedCase:
         """Insert-if-absent for one case, inside a caller-owned transaction."""
+        _assert_registrable(case)
         existing = self._select_case(connection, case.review_case_id)
         if existing is not None:
             self._assert_identity_matches(existing, case)

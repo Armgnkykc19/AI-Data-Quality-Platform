@@ -7,18 +7,38 @@ or decides anything about a review case.
 
 Three defaults are policy rather than preference.
 
-``127.0.0.1`` because this API has no authentication, no verified reviewer
-identity, and no tenant isolation, while ``POST .../resolve`` is an
-authoritative write over customer-derived evidence. Binding it to ``0.0.0.0``
-would publish an unauthenticated decision endpoint to the network, so the host
-is validated rather than trusted, and a non-loopback address is refused here
-instead of failing later at a firewall that may not exist.
+``127.0.0.1``, and the reason is no longer the one this docstring used to give.
+Sprint 13 added authentication, server-derived reviewer identity, and
+tenant-scoped authorization, so the API is not an open decision endpoint any
+more: every review route requires a session cookie and a proven membership, the
+reviewer id on a durable audit row comes from the authenticated principal, and
+no request can name a tenant it has not been granted.
 
-``workers=1`` because Sprint 10's ``ReviewDatabase`` holds a single ``sqlite3``
-connection, and a ``sqlite3`` connection is legal only on the thread that
-created it. A second worker is a second process with its own connection to the
-same file, which is not what the optimistic-version contract was designed
-against. Sprint 14 owns the concurrency model.
+What is still missing is the transport. Sessions are bearer cookies, and the
+protection a cookie needs off-localhost -- TLS termination, HSTS, a reverse
+proxy whose forwarded headers are trusted deliberately -- is deployment work
+this repository has not done. There is also no CORS middleware, by design, so
+the only supported browser path is the same-origin Vite proxy. Binding
+``0.0.0.0`` would therefore put live session cookies on the network, which is
+why the host is validated rather than trusted and a non-loopback address is
+refused here instead of failing later at a firewall that may not exist.
+
+This is a local runtime. It is not a statement that the application is ready
+for internet exposure.
+
+``workers=1`` because ``ReviewDatabase`` holds a single ``sqlite3`` connection,
+and a ``sqlite3`` connection is legal only on the thread that created it. A
+second worker would be a second process with its own connection to the same
+file.
+
+Sprint 14 Phase A made that second process *safe* rather than merely absent:
+one resolution now holds one write transaction across loading the
+authorization bundle, asking the Sprint 08 domain, and writing the result, so a
+concurrent writer cannot authorize against a queue state the first is about to
+invalidate. Raising the worker count is still a separate decision with its own
+throughput consequences -- every resolution serializes on the queue's write
+lock -- so it stays at one until the concurrency model is designed rather than
+inherited.
 
 ``reload=False`` because the reloader runs the application in a child process
 and restarts it on file changes, which would reopen the queue underneath a
@@ -92,8 +112,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         prog="python -m review_api",
         description="Serve the reviewer API for the persistent review queue on localhost.",
         epilog=(
-            "Localhost only: this API has no authentication and no reviewer identity. "
-            "Register a review queue before starting it. "
+            "Localhost only: session cookies require TLS, which this local runtime does "
+            "not provide. Authentication, server-derived reviewer identity and "
+            "tenant-scoped authorization are enforced. Create an organization, a review "
+            "queue and a user, and register a workflow, before starting it. "
             "Exit codes: 0 success, 1 usage, 2 no review queue registered."
         ),
     )
@@ -116,10 +138,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not is_loopback(args.host):
         print(
-            f"Refusing to bind {args.host!r}: the Sprint 11 reviewer API is "
-            "localhost only. It has no authentication, no verified reviewer "
-            "identity, and an authoritative write endpoint. Use 127.0.0.1, "
-            "localhost, or ::1."
+            f"Refusing to bind {args.host!r}: this runtime is localhost only. "
+            "The API is authenticated, but its session cookie is a bearer "
+            "credential and this runtime terminates no TLS, so binding a "
+            "reachable address would put live sessions on the network. "
+            "Use 127.0.0.1, localhost, or ::1."
         )
         return EXIT_USAGE
     if not MIN_PORT <= args.port <= MAX_PORT:

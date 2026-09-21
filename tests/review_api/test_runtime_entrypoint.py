@@ -307,12 +307,26 @@ def test_the_runner_passes_no_path_to_the_server(served: RecordedRun) -> None:
 def test_the_help_states_the_localhost_boundary(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """The boundary is stated, and stated for the reason that is actually true.
+
+    Until Sprint 14 Phase A this asserted the help said "no authentication",
+    which had been false since Sprint 13 added sessions, tenant-scoped
+    authorization and a server-derived reviewer identity. Documentation that
+    understates the product is a smaller problem than documentation that
+    overstates it, but it still sends an operator to the wrong conclusion about
+    what the loopback restriction is protecting.
+
+    What is protected is the transport: the session cookie is a bearer
+    credential and this runtime terminates no TLS. So the help must keep saying
+    localhost only, and must not claim the API is unauthenticated.
+    """
     with pytest.raises(SystemExit):
         runtime.parse_args(["--help"])
 
     out = capsys.readouterr().out
     assert "Localhost only" in out
-    assert "no authentication" in out
+    assert "TLS" in out
+    assert "no authentication" not in out
 
 
 # --------------------------------------------------------------------------

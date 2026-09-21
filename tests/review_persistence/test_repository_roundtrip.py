@@ -18,7 +18,11 @@ from human_review.models import (
     ReviewWorkflowState,
 )
 from human_review.reporting import load_human_review_report, write_review_reports
-from review_application.errors import DuplicateCaseRegistrationError, ReviewPersistenceError
+from review_application.errors import (
+    DuplicateCaseRegistrationError,
+    PersistedCaseIntegrityError,
+    ReviewPersistenceError,
+)
 from review_application.models import PersistedCase
 from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
@@ -108,14 +112,40 @@ def test_round_trip_preserves_pair_ordering_and_ids(
 
 
 def test_round_trip_preserves_a_resolved_case_and_its_resolution(
-    repository: SqliteReviewCaseRepository, resolved_match_case: ReviewCase
+    repository: SqliteReviewCaseRepository,
+    resolved_match_case: ReviewCase,
+    stored_resolved_match: PersistedCase,
 ) -> None:
-    repository.register_case(resolved_match_case)
+    """A decided case survives storage unchanged, including its ReviewResolution.
+
+    Seeded through ``apply_resolution`` rather than by registering the resolved
+    case, because registration no longer accepts one. What is being tested is
+    the mapper, and the mapper sees the same object either way.
+    """
     loaded = repository.get_case(resolved_match_case.review_case_id).case
 
     assert loaded.status is ReviewStatus.MATCH
     assert loaded.resolution == resolved_match_case.resolution
     assert loaded == resolved_match_case
+    assert stored_resolved_match.case == resolved_match_case
+
+
+def test_registration_refuses_a_resolved_case(
+    repository: SqliteReviewCaseRepository,
+    resolved_match_case: ReviewCase,
+) -> None:
+    """Registration stores pending work; it cannot be used to record a decision.
+
+    The bypass this closes is specific. ``register_case`` inserts at version 1
+    and writes no resolution event, and ``reconstruct_history`` accepts
+    "resolved case with no event" as a legitimate pre-event-table import -- so a
+    resolved case inserted here would become durable, readable history that
+    never passed ``assert_human_match_authorization_boundary``.
+    """
+    with pytest.raises(PersistedCaseIntegrityError, match="registration stores PENDING"):
+        repository.register_case(resolved_match_case)
+
+    assert repository.list_cases() == ()
 
 
 def test_mapper_agrees_with_the_sprint_08_report_loader(
@@ -271,26 +301,31 @@ def test_resolved_case_cannot_regress_to_pending_through_registration(
     repository: SqliteReviewCaseRepository,
     resolved_match_case: ReviewCase,
     review_case: ReviewCase,
+    stored_resolved_match: PersistedCase,
     clock: FrozenClock,
 ) -> None:
     """The most dangerous persistence bug this sprint can produce.
 
     Case generation is deterministic and always emits the PENDING form. If
     re-running it overwrote storage, a human MATCH would silently disappear.
+
+    The decision is seeded through ``apply_resolution``, which is now the only
+    way a stored case becomes decided, so the row being defended here is a real
+    one: version 2, with its resolution event alongside it.
     """
     assert resolved_match_case.review_case_id == review_case.review_case_id
     assert review_case.status is ReviewStatus.PENDING
+    assert stored_resolved_match.status is ReviewStatus.MATCH
 
-    stored = repository.register_case(resolved_match_case)
     clock.advance(7200)
 
     returned = repository.register_case(review_case)
 
     assert returned.status is ReviewStatus.MATCH
     assert returned.case.resolution == resolved_match_case.resolution
-    assert returned.version == stored.version == 1
-    assert returned.created_at_utc == stored.created_at_utc
-    assert returned.updated_at_utc == stored.updated_at_utc
+    assert returned.version == stored_resolved_match.version
+    assert returned.created_at_utc == stored_resolved_match.created_at_utc
+    assert returned.updated_at_utc == stored_resolved_match.updated_at_utc
 
     reloaded = repository.get_case(review_case.review_case_id)
     assert reloaded.case == resolved_match_case
@@ -410,9 +445,9 @@ def test_list_cases_ties_break_on_review_case_id(
 def test_status_filter_selects_only_that_status(
     repository: SqliteReviewCaseRepository,
     resolved_match_case: ReviewCase,
+    stored_resolved_match: PersistedCase,
     clock: FrozenClock,
 ) -> None:
-    repository.register_case(resolved_match_case)
     clock.advance(60)
     pending_ids = set(_register_chain(repository, clock))
     pending_ids.discard(resolved_match_case.review_case_id)
@@ -461,6 +496,9 @@ def test_repository_exposes_no_decision_mutation_method() -> None:
     # audit entry, and record_semantic_suggestion cannot reach review_cases at
     # all.
     assert names == {
+        # Sprint 14 Phase A. Bounds one serialized write scope; it takes no
+        # arguments, yields nothing writable, and changes no row itself.
+        "unit_of_work",
         "register_case",
         "register_workflow",
         "get_case",

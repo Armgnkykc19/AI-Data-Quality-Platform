@@ -21,7 +21,11 @@ from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.schema import DATABASE_SCHEMA_VERSION
 from review_persistence.sqlite.database import open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
-from tests.review_persistence.conftest import FrozenClock, bound_repository
+from tests.review_persistence.conftest import (
+    FrozenClock,
+    bound_repository,
+    seed_resolved_case,
+)
 
 
 def _reopen(config: ReviewPersistenceConfig, clock: FrozenClock) -> SqliteReviewCaseRepository:
@@ -60,11 +64,20 @@ def test_resolved_case_survives_a_restart_without_regressing(
     persistence_config: ReviewPersistenceConfig,
     resolved_match_case: ReviewCase,
     review_case: ReviewCase,
+    review_state: ReviewWorkflowState,
+    resolved_match_state: ReviewWorkflowState,
+    resolution: ResolutionResult,
 ) -> None:
     clock = FrozenClock()
 
     database = open_review_database(persistence_config, clock=clock)
-    written = bound_repository(database, clock).register_case(resolved_match_case)
+    written = seed_resolved_case(
+        bound_repository(database, clock),
+        pending_state=review_state,
+        resolved_state=resolved_match_state,
+        review_case_id=review_case.review_case_id,
+        resolution=resolution,
+    )
     database.close()
 
     clock.advance(3600)
@@ -78,7 +91,7 @@ def test_resolved_case_survives_a_restart_without_regressing(
 
     assert returned.status is ReviewStatus.MATCH
     assert reloaded.case == resolved_match_case
-    assert reloaded.version == written.version == 1
+    assert reloaded.version == written.version
     assert reloaded.created_at_utc == written.created_at_utc
     assert reloaded.updated_at_utc == written.updated_at_utc
 
@@ -189,11 +202,12 @@ def test_resolved_workflow_survives_a_restart_without_regressing(
     clock = FrozenClock()
 
     database = open_review_database(persistence_config, clock=clock)
-    written = bound_repository(database, clock).register_workflow(
-        resolved_match_state,
-        entity_records=resolution.records,
-        resolution_snapshot=snapshot,
-        entity_resolution_config_path=None,
+    written = seed_resolved_case(
+        bound_repository(database, clock),
+        pending_state=review_state,
+        resolved_state=resolved_match_state,
+        review_case_id=review_state.cases[0].review_case_id,
+        resolution=resolution,
     )
     database.close()
 
@@ -213,9 +227,9 @@ def test_resolved_workflow_survives_a_restart_without_regressing(
         reopened.close()
 
     assert returned[0].status is ReviewStatus.MATCH
-    assert returned[0].version == written[0].version == 1
-    assert returned[0].created_at_utc == written[0].created_at_utc
-    assert returned[0].updated_at_utc == written[0].updated_at_utc
+    assert returned[0].version == written.version
+    assert returned[0].created_at_utc == written.created_at_utc
+    assert returned[0].updated_at_utc == written.updated_at_utc
     assert bundle.cases() == resolved_match_state.cases
 
 

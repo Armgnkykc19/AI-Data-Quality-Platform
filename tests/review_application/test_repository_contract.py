@@ -4,7 +4,8 @@ import ast
 import dataclasses
 import inspect
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import Any, Protocol, get_type_hints
 
@@ -21,6 +22,10 @@ from semantic_review.models import SemanticSuggestion
 # that decides whether it can manufacture a decision.
 EXPECTED_REPOSITORY_METHODS = frozenset(
     {
+        # Sprint 14 Phase A. Bounds one serialized write scope so that the
+        # queue state Sprint 08 authorized against is the state the resolution
+        # commits onto. It writes nothing itself and names nothing writable.
+        "unit_of_work",
         "register_workflow",
         "get_case",
         "list_cases",
@@ -169,8 +174,31 @@ def test_every_repository_method_documents_its_contract() -> None:
     assert not undocumented
 
 
+def test_unit_of_work_takes_nothing_and_yields_no_storage_handle() -> None:
+    """The scope seam must not become a way into the database.
+
+    It is the one Protocol method that exists for the application layer's
+    benefit rather than to move data, so the risk is not that it writes
+    something but that it hands back a connection. Parameterless, and typed as
+    a context manager over ``object`` rather than over anything a caller could
+    execute SQL on.
+    """
+    method = _public_methods()["unit_of_work"]
+    signature = inspect.signature(method)
+
+    assert list(signature.parameters) == ["self"]
+
+    hints = get_type_hints(method)
+    assert hints["return"] == AbstractContextManager[object]
+
+
 class _ConformingRepository:
     """A structural implementation, proving the Protocol is satisfiable as written."""
+
+    @contextmanager
+    def unit_of_work(self) -> Iterator[None]:
+        raise NotImplementedError
+        yield  # pragma: no cover - unreachable, present so this is a generator
 
     def register_workflow(
         self,

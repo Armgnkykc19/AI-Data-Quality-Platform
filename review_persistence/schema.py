@@ -56,14 +56,37 @@ from review_persistence.identity_schema import (
 )
 from semantic_review.models import FORBIDDEN_HUMAN_DECISIONS, SemanticSuggestionType
 
+# Still 2.0.0 after Sprint 14 Phase A tightened the resolution-sequence index,
+# and that is a deliberate application of this project's existing rule rather
+# than an oversight.
+#
+# A version number exists so that an *already existing* database can be
+# recognised and handled. 2.0.0 has never shipped -- it is still being
+# assembled, and no database outside a working tree declares it -- so there is
+# nothing for a bump to distinguish. Sprint 10 set the precedent explicitly
+# when it added the workflow-context table to an unreleased 1.0.0 instead of
+# inventing 1.1.0. Bumping here would mean writing, testing and documenting a
+# migration between two versions of a schema that only ever existed as one.
+#
+# The cost of the rule is real and is worth naming: ``initialize`` runs the DDL
+# only for a database with no tables, so a 2.0.0 file created *before* this
+# change keeps the old, weaker index and still passes the version check. That
+# is a local-development file, not a deployment, and the honest answer to it is
+# detection rather than a migration framework -- ``verify-queue`` reports a
+# queue whose expected indexes are missing. See
+# ``review_persistence.integrity``.
 DATABASE_SCHEMA_VERSION = "2.0.0"
 SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({DATABASE_SCHEMA_VERSION})
 
 # Versions this build recognizes but cannot serve. Separated from "unknown" so
-# an operator holding a pre-tenancy database is told that an explicit migration
-# is required, rather than that their database is unrecognizable. Neither case
-# is ever upgraded in place by an application start; see
-# ``review_persistence.sqlite.database``.
+# an operator holding one is told what is wrong with it rather than that their
+# database is unrecognizable. Neither is ever upgraded in place by an
+# application start; see ``review_persistence.sqlite.database``.
+#
+# 1.0.0 shipped, and predates tenant ownership: its review data belongs to no
+# organization or queue. There is no non-destructive upgrade -- an owner would
+# have to be invented for every row -- so none is offered, and the error says
+# so instead of pointing at a migration that does not exist.
 MIGRATION_REQUIRED_SCHEMA_VERSIONS = frozenset({"1.0.0"})
 
 SCHEMA_META_TABLE = "schema_meta"
@@ -114,21 +137,37 @@ def assert_supported_schema_version(version: str) -> None:
     """Fail closed on a database this build does not understand.
 
     A version this build once wrote gets its own error, because the operator
-    response differs: an explicit migration exists for it, while an unknown
-    version means the file was written by a different build entirely. Both
-    refuse to open, and neither is ever upgraded here.
+    response differs: they are holding real review data and need to be told
+    what can be done with it, while an unknown version means the file was
+    written by a different build entirely. Both refuse to open, and neither is
+    ever upgraded here.
+
+    The recognized-but-unservable message says plainly that **no migration
+    exists**. It used to say "run the explicit operator migration", which named
+    nothing: there is no such command in this repository and there is no
+    non-destructive one to write, because 1.0.0 review data belongs to no
+    organization or review queue and an owner would have to be invented for
+    every row. Pointing an operator at a tool that does not exist is worse than
+    telling them the truth, which is that the path forward is a new database.
+
+    Nothing is ever upgraded here; this function only reads a string.
     """
     if version in SUPPORTED_DATABASE_SCHEMA_VERSIONS:
         return
+
     if version in MIGRATION_REQUIRED_SCHEMA_VERSIONS:
         raise ReviewSchemaMigrationRequiredError(
             f"Review database schema version '{version}' predates tenant ownership and "
             f"cannot be served by this build, which requires '{DATABASE_SCHEMA_VERSION}'. "
-            "Its review data is not owned by any organization or review queue. Run the "
-            "explicit operator migration; no migration is ever performed on startup.",
+            "Its review data belongs to no organization or review queue, so there is no "
+            "non-destructive upgrade: an owner would have to be invented for every row. "
+            "No automatic or operator migration is provided, and nothing here will alter "
+            "the file. Provision a new database, create the organization and review queue "
+            "explicitly, and register the workflow into them.",
             stored_version=version,
             required_version=DATABASE_SCHEMA_VERSION,
         )
+
     supported = ", ".join(sorted(SUPPORTED_DATABASE_SCHEMA_VERSIONS))
     raise ReviewSchemaVersionError(
         f"Unsupported review database schema version '{version}'. Supported: {supported}."
@@ -338,13 +377,38 @@ CREATE_TABLE_STATEMENTS: tuple[str, ...] = (
 )
 
 
-# Partial unique index: two resolutions of the same case can never claim the
-# same ordinal, while the many NULL sequences on lifecycle rows stay unaffected.
-# Scoped by queue along with the case, because the case id alone no longer
-# identifies a case.
+# Partial unique index on (queue, sequence) -- deliberately *not* (queue, case,
+# sequence), which is what this index said before Sprint 14 Phase A and which
+# protected nothing.
+#
+# The invariant that actually has to hold is queue-global.
+# ``review_application.history.reconstruct_history`` sorts every resolved case
+# in the queue by ``resolution_sequence`` and requires 1, 2, 3, ... with no gap
+# and no repeat, because that is what ``ReviewWorkflow`` produces: it takes the
+# state's ``next_resolution_sequence``, uses it, and increments by one.
+#
+# Including ``review_case_id`` in the key made the index enforce "one ordinal
+# per case", which no writer can violate anyway -- a case is resolvable only
+# while PENDING, and a second resolution event for one case is rejected several
+# layers up. Meanwhile two *different* cases could both claim ordinal 1, since
+# (Q, caseA, 1) and (Q, caseB, 1) are different keys. Nothing stopped that at
+# the database, and the result is not a tidy duplicate: every later
+# ``load_workflow_bundle`` for the queue raises out of the contiguity check, so
+# the queue can no longer be read or resolved at all.
+#
+# Dropping the case id makes the index enforce the invariant the reader
+# actually depends on. It is a backstop rather than the primary control -- the
+# application service holds one write transaction across load, authorize and
+# write, so two writers cannot compute the same ordinal in the first place --
+# and it is kept precisely because that reasoning is about application code,
+# while this is about what the database will accept.
+#
+# Still partial: lifecycle and semantic rows carry NULL sequences, many per
+# queue, and NULLs must stay unconstrained. That is also the statement that a
+# semantic suggestion consumes no resolution ordinal.
 UNIQUE_RESOLUTION_SEQUENCE_INDEX = f"""
 CREATE UNIQUE INDEX IF NOT EXISTS ux_review_case_events_resolution_sequence
-    ON {REVIEW_CASE_EVENTS_TABLE} (review_queue_id, review_case_id, resolution_sequence)
+    ON {REVIEW_CASE_EVENTS_TABLE} (review_queue_id, resolution_sequence)
     WHERE resolution_sequence IS NOT NULL
 """.strip()
 

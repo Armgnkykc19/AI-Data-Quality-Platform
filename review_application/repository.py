@@ -23,6 +23,7 @@ only ever see its own queue's rows.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
 from entity_resolution.models import EntityRecord
@@ -45,6 +46,41 @@ class ReviewCaseRepository(Protocol):
     * a generic ``append_event`` — it would let a caller write a MATCH history
       row without ever applying a resolution
     """
+
+    def unit_of_work(self) -> AbstractContextManager[object]:
+        """Hold one serialized write scope across several calls below.
+
+        The reason this exists is narrow and is the whole of Sprint 14 Phase A's
+        concurrency fix. Sprint 08 MATCH authorization is a property of the
+        queue, not of the reviewed pair: it projects a connected component
+        across every AUTO_MATCH edge and every recorded human decision. So a
+        resolution is three steps -- load the bundle, ask the domain, write the
+        result -- and the authorization it performed is only valid if the queue
+        did not move between the first step and the third.
+
+        Target-case ``expected_version`` does not establish that. It proves the
+        *one* row being written has not changed, which is lost-update
+        protection and nothing more. Two writers resolving two *different*
+        cases in one component each pass their own version check, and the
+        combined state can be one the domain would have refused if it had been
+        asked once, in order.
+
+        An implementation must therefore make the enclosed calls observe and
+        write one serialized state: whatever :meth:`load_workflow_bundle`
+        returns inside this scope must still be true when
+        :meth:`apply_resolution` commits inside the same scope, and a
+        concurrent writer must not be able to interleave. Committing the whole
+        scope atomically is what satisfies that; a nested implementation must
+        join the outer scope rather than open a second one.
+
+        Reentrant, so a repository method that takes its own transaction stays
+        correct whether or not it was called from inside one.
+
+        The yielded value is deliberately opaque. Callers use this to bound a
+        scope, never to obtain a connection, a cursor, or anything else that
+        would let the application layer write SQL.
+        """
+        ...
 
     def register_workflow(
         self,
