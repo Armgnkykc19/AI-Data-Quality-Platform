@@ -21,12 +21,12 @@ from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.schema import DATABASE_SCHEMA_VERSION
 from review_persistence.sqlite.database import open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, bound_repository
 
 
 def _reopen(config: ReviewPersistenceConfig, clock: FrozenClock) -> SqliteReviewCaseRepository:
     """A fresh database object and connection against the same file."""
-    return SqliteReviewCaseRepository(open_review_database(config, clock=clock), clock=clock)
+    return bound_repository(open_review_database(config, clock=clock), clock)
 
 
 def test_registered_case_survives_a_full_restart(
@@ -36,7 +36,7 @@ def test_registered_case_survives_a_full_restart(
     clock = FrozenClock()
 
     first_database = open_review_database(persistence_config, clock=clock)
-    written = SqliteReviewCaseRepository(first_database, clock=clock).register_case(review_case)
+    written = bound_repository(first_database, clock).register_case(review_case)
     first_database.close()
 
     assert persistence_config.database_path.exists()
@@ -44,9 +44,7 @@ def test_registered_case_survives_a_full_restart(
     clock.advance(86400)
     second_database = open_review_database(persistence_config, clock=clock)
     try:
-        reloaded = SqliteReviewCaseRepository(second_database, clock=clock).get_case(
-            review_case.review_case_id
-        )
+        reloaded = bound_repository(second_database, clock).get_case(review_case.review_case_id)
     finally:
         second_database.close()
 
@@ -66,7 +64,7 @@ def test_resolved_case_survives_a_restart_without_regressing(
     clock = FrozenClock()
 
     database = open_review_database(persistence_config, clock=clock)
-    written = SqliteReviewCaseRepository(database, clock=clock).register_case(resolved_match_case)
+    written = bound_repository(database, clock).register_case(resolved_match_case)
     database.close()
 
     clock.advance(3600)
@@ -91,7 +89,7 @@ def test_schema_version_and_foreign_keys_survive_a_restart(
 ) -> None:
     clock = FrozenClock()
     database = open_review_database(persistence_config, clock=clock)
-    SqliteReviewCaseRepository(database, clock=clock).register_case(review_case)
+    bound_repository(database, clock).register_case(review_case)
     database.close()
 
     reopened = open_review_database(persistence_config, clock=clock)
@@ -110,7 +108,7 @@ def test_identity_guard_still_applies_after_a_restart(
 
     clock = FrozenClock()
     database = open_review_database(persistence_config, clock=clock)
-    SqliteReviewCaseRepository(database, clock=clock).register_case(review_case)
+    bound_repository(database, clock).register_case(review_case)
     database.close()
 
     repository = _reopen(persistence_config, clock)
@@ -132,7 +130,7 @@ def test_no_database_is_created_outside_the_temporary_path(
 ) -> None:
     database = open_review_database(persistence_config)
     try:
-        SqliteReviewCaseRepository(database).register_case(review_case)
+        bound_repository(database).register_case(review_case)
     finally:
         database.close()
 
@@ -156,19 +154,19 @@ def test_workflow_bundle_survives_a_full_restart(
     clock = FrozenClock()
 
     database = open_review_database(persistence_config, clock=clock)
-    written = SqliteReviewCaseRepository(database, clock=clock).register_workflow(
+    written = bound_repository(database, clock).register_workflow(
         review_state,
         entity_records=resolution.records,
         resolution_snapshot=snapshot,
         entity_resolution_config_path="configs/entity_resolution.yaml",
     )
-    before = SqliteReviewCaseRepository(database, clock=clock).load_workflow_bundle()
+    before = bound_repository(database, clock).load_workflow_bundle()
     database.close()
 
     clock.advance(86400)
     reopened = open_review_database(persistence_config, clock=clock)
     try:
-        after = SqliteReviewCaseRepository(reopened, clock=clock).load_workflow_bundle()
+        after = bound_repository(reopened, clock).load_workflow_bundle()
     finally:
         reopened.close()
 
@@ -191,7 +189,7 @@ def test_resolved_workflow_survives_a_restart_without_regressing(
     clock = FrozenClock()
 
     database = open_review_database(persistence_config, clock=clock)
-    written = SqliteReviewCaseRepository(database, clock=clock).register_workflow(
+    written = bound_repository(database, clock).register_workflow(
         resolved_match_state,
         entity_records=resolution.records,
         resolution_snapshot=snapshot,
@@ -202,7 +200,7 @@ def test_resolved_workflow_survives_a_restart_without_regressing(
     clock.advance(3600)
     reopened = open_review_database(persistence_config, clock=clock)
     try:
-        repository = SqliteReviewCaseRepository(reopened, clock=clock)
+        repository = bound_repository(reopened, clock)
         # Case generation after a restart still emits the PENDING form.
         returned = repository.register_workflow(
             review_state,
@@ -229,7 +227,7 @@ def test_context_conflict_still_fails_closed_after_a_restart(
 ) -> None:
     clock = FrozenClock()
     database = open_review_database(persistence_config, clock=clock)
-    SqliteReviewCaseRepository(database, clock=clock).register_workflow(
+    bound_repository(database, clock).register_workflow(
         review_state,
         entity_records=resolution.records,
         resolution_snapshot=snapshot,
@@ -239,7 +237,7 @@ def test_context_conflict_still_fails_closed_after_a_restart(
 
     reopened = open_review_database(persistence_config, clock=clock)
     try:
-        repository = SqliteReviewCaseRepository(reopened, clock=clock)
+        repository = bound_repository(reopened, clock)
         with pytest.raises(ReviewWorkflowContextConflictError):
             repository.register_workflow(
                 review_state,

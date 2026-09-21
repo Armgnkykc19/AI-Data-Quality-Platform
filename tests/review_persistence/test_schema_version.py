@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from review_application.errors import ReviewSchemaVersionError
+from review_application.errors import (
+    ReviewSchemaMigrationRequiredError,
+    ReviewSchemaVersionError,
+)
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.schema import DATABASE_SCHEMA_VERSION
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
@@ -39,7 +42,7 @@ def test_known_schema_version_opens(config: ReviewPersistenceConfig) -> None:
         reopened.close()
 
 
-@pytest.mark.parametrize("version", ["0.9.0", "1.0.1", "2.0.0", "", "not-a-version"])
+@pytest.mark.parametrize("version", ["0.9.0", "1.0.1", "3.0.0", "", "not-a-version"])
 def test_unknown_schema_version_fails_closed(config: ReviewPersistenceConfig, version: str) -> None:
     open_review_database(config).close()
     _stamp_version(config, version)
@@ -50,7 +53,7 @@ def test_unknown_schema_version_fails_closed(config: ReviewPersistenceConfig, ve
 
 def test_unknown_version_is_not_silently_upgraded(config: ReviewPersistenceConfig) -> None:
     open_review_database(config).close()
-    _stamp_version(config, "2.0.0")
+    _stamp_version(config, "3.0.0")
 
     with pytest.raises(ReviewSchemaVersionError):
         open_review_database(config)
@@ -69,8 +72,60 @@ def test_unknown_version_is_not_silently_upgraded(config: ReviewPersistenceConfi
     finally:
         connection.close()
 
-    assert stored == "2.0.0"
+    assert stored == "3.0.0"
     assert "review_cases" in tables
+
+
+def test_a_schema_1_0_0_database_demands_an_explicit_migration(
+    config: ReviewPersistenceConfig,
+) -> None:
+    """The pre-tenancy schema is refused on open, and nothing is changed.
+
+    A 1.0.0 database holds review cases that belong to no organization and no
+    review queue. Opening it under 2.0.0 would mean inventing an owner for
+    other people's human decisions, so the process refuses to start and waits
+    for an operator to migrate it deliberately.
+    """
+    open_review_database(config).close()
+    _stamp_version(config, "1.0.0")
+
+    with pytest.raises(ReviewSchemaMigrationRequiredError) as failure:
+        open_review_database(config)
+
+    assert failure.value.stored_version == "1.0.0"
+    assert failure.value.required_version == DATABASE_SCHEMA_VERSION
+
+    # No upgrade, no rewrite of the marker, no table dropped.
+    connection = sqlite3.connect(config.database_path)
+    try:
+        stored = connection.execute("SELECT schema_version FROM schema_meta").fetchone()[0]
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    finally:
+        connection.close()
+
+    assert stored == "1.0.0"
+    assert "review_cases" in tables
+
+
+def test_the_migration_error_is_still_a_schema_version_error(
+    config: ReviewPersistenceConfig,
+) -> None:
+    """So every handler written against the old error keeps answering.
+
+    ``review_api.errors`` maps ``ReviewSchemaVersionError`` to a 503 with a
+    static message. The migration case must not slip past that mapping into
+    the catch-all and become a 500.
+    """
+    open_review_database(config).close()
+    _stamp_version(config, "1.0.0")
+
+    with pytest.raises(ReviewSchemaVersionError):
+        open_review_database(config)
 
 
 def test_missing_version_row_fails_closed(config: ReviewPersistenceConfig) -> None:

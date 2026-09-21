@@ -22,6 +22,8 @@ __all__ = [
     "ReviewEventIntegrityError",
     "ReviewPersistenceConfigurationError",
     "ReviewPersistenceError",
+    "ReviewQueueNotFoundError",
+    "ReviewSchemaMigrationRequiredError",
     "ReviewSchemaVersionError",
     "ReviewWorkflowContextConflictError",
     "ReviewWorkflowContextMissingError",
@@ -113,6 +115,35 @@ class ReviewPersistenceError(ReviewApplicationError):
 
 class ReviewSchemaVersionError(ReviewPersistenceError):
     """The database declares a schema version this build does not support."""
+
+
+class ReviewSchemaMigrationRequiredError(ReviewSchemaVersionError):
+    """The database is a known earlier schema that must be migrated explicitly.
+
+    A subclass rather than a sibling, so every existing handler that answers a
+    schema problem -- including the API's 503 mapping -- keeps answering this
+    one unchanged. What the subclass adds is the distinction an operator needs:
+    a database this build once wrote and can be migrated forward, as opposed to
+    one written by a build this code has never heard of.
+
+    Raised on open and never acted on. Nothing upgrades a database in place,
+    drops a table, or recreates a file; a review queue holds human decisions,
+    and guessing is worse than refusing to open.
+    """
+
+    def __init__(self, message: str, *, stored_version: str, required_version: str) -> None:
+        super().__init__(message)
+        self.stored_version = stored_version
+        self.required_version = required_version
+
+
+class ReviewQueueNotFoundError(ReviewApplicationError):
+    """The review queue a write was addressed to is not stored.
+
+    Raised before any review row is written, so a workflow can never be
+    registered into a queue that does not exist -- which, with tenant ownership
+    flowing through the queue, would be review data owned by nobody.
+    """
 
 
 class ReviewPersistenceConfigurationError(ReviewApplicationError):

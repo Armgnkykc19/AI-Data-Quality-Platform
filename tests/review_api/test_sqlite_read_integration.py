@@ -7,8 +7,8 @@ that a case registered through ``register_workflow``, resolved through
 looking the way the contract says it should.
 
 The queue is seeded by calling the repository directly. That is fixture setup
-and nothing more: it does **not** close the production registration gap, which
-remains a Phase D deliverable. No production code path populates a queue yet.
+and nothing more; the operator command that populates a queue for real is
+exercised end to end in ``test_operational_smoke``.
 
 Every database lives under ``tmp_path``. ``storage/review_queue.db`` is never
 touched, and a test that did touch it would be writing to a real reviewer queue.
@@ -28,17 +28,32 @@ from entity_resolution.config import load_entity_resolution_config
 from human_review.models import HumanReviewDecision
 from human_review.reporting import resolution_snapshot
 from review_api import create_app
+from review_api.dependencies import SqliteReviewQueueBinder
+from review_api.security import get_authenticated_principal
+from review_api.tenancy import TenantAuthorizationService
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite import (
     ReviewDatabase,
     SqliteReviewCaseRepository,
+    SqliteTenantRepository,
     open_review_database,
 )
 from tests.human_review.conftest import match_authorization_kwargs
 from tests.review_api.conftest import NOW, build_review_state, records_by_id
+from tests.review_api.tenant_support import make_principal, tenant_path
+from tests.review_persistence.conftest import (
+    FIXTURE_USER_ID,
+    ORGANIZATION_ID,
+    REVIEW_QUEUE_ID,
+    bound_repository,
+    provision_membership,
+)
 from tests.review_persistence.semantic_fixtures import make_suggestion
 
-CASES_URL = "/api/v1/review-cases"
+# The real tenant the fixture queue belongs to, named in every URL. Nothing here
+# is inferred: the queue is reached because the path says which one it is and
+# the membership below says this user may.
+CASES_URL = tenant_path(organization_id=ORGANIZATION_ID, review_queue_id=REVIEW_QUEUE_ID)
 
 
 @pytest.fixture
@@ -66,13 +81,22 @@ async def open_queue(app: FastAPI, config: ReviewPersistenceConfig) -> AsyncIter
     That constraint is Sprint 11's accepted temporary one, unchanged from Phase
     A: no ``check_same_thread``, no lock, no executor. Sprint 14 owns the
     redesign.
+
+    The tenant layer is wired exactly as ``production_lifespan`` wires it: a
+    binder that constructs a queue-scoped repository per authorized request, and
+    the real authorization service over the real tenant tables. No repository is
+    bound to the application, because no application-wide queue exists any more.
     """
     database = open_review_database(config)
     try:
-        app.state.repository = SqliteReviewCaseRepository(database)
+        app.state.queue_binder = SqliteReviewQueueBinder(database)
+        app.state.tenant_authorization = TenantAuthorizationService(
+            SqliteTenantRepository(database)
+        )
         yield
     finally:
-        app.state.repository = None
+        app.state.queue_binder = None
+        app.state.tenant_authorization = None
         database.close()
 
 
@@ -90,7 +114,7 @@ def seeded(persistence_config: ReviewPersistenceConfig) -> dict:
 
     database = open_review_database(persistence_config)
     try:
-        repository = SqliteReviewCaseRepository(database)
+        repository = bound_repository(database)
         repository.register_workflow(
             state,
             entity_records=resolution.records,
@@ -99,6 +123,9 @@ def seeded(persistence_config: ReviewPersistenceConfig) -> dict:
             now_utc=NOW,
         )
         repository.record_semantic_suggestion(suggestion, now_utc=NOW)
+        # A real membership row, so the reads below are authorized by the real
+        # policy against real storage rather than waved through.
+        provision_membership(database)
     finally:
         database.close()
 
@@ -114,10 +141,21 @@ def seeded(persistence_config: ReviewPersistenceConfig) -> dict:
 
 @pytest.fixture
 def client(seeded: dict) -> Iterator[TestClient]:
+    """A client whose requests are authorized for the fixture tenant.
+
+    The principal dependency is overridden rather than driven through a login:
+    this file is about what the read routes do with real stored state, and the
+    cookie path is proven against real sessions in ``test_tenant_authorization``.
+    Everything below identity -- the membership read, the queue ownership check,
+    the queue binding -- is the production code, over the production tables.
+    """
+
     def lifespan(app: FastAPI):
         return open_queue(app, seeded["config"])
 
-    with TestClient(create_app(lifespan=lifespan)) as test_client:
+    app = create_app(lifespan=lifespan)
+    app.dependency_overrides[get_authenticated_principal] = lambda: make_principal(FIXTURE_USER_ID)
+    with TestClient(app) as test_client:
         yield test_client
 
 
@@ -126,7 +164,7 @@ def open_repository(seeded: dict) -> Iterator[SqliteReviewCaseRepository]:
     """A short-lived repository on this thread, for seeding and verification."""
     database: ReviewDatabase = open_review_database(seeded["config"])
     try:
-        yield SqliteReviewCaseRepository(database)
+        yield bound_repository(database)
     finally:
         database.close()
 
@@ -134,9 +172,9 @@ def open_repository(seeded: dict) -> Iterator[SqliteReviewCaseRepository]:
 def resolve_through_the_domain(seeded: dict, decision: HumanReviewDecision) -> None:
     """Resolve using the real Sprint 08 workflow and the real Sprint 10 repository.
 
-    The API is not involved: Phase B has no write endpoint. This exists only so
-    the read endpoints can be tested against state the domain actually produced,
-    rather than a status a test assigned by hand.
+    The API is deliberately not involved. This exists only so the read endpoints
+    can be tested against state the domain actually produced, rather than a
+    status a test assigned by hand; the HTTP write path has its own file.
     """
     from human_review.workflow import ReviewWorkflow
     from review_application import ReviewEvent

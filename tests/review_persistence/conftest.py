@@ -12,15 +12,35 @@ from human_review.cases import generate_review_cases
 from human_review.models import HumanReviewDecision, ReviewCase, ReviewWorkflowState
 from human_review.reporting import resolution_snapshot
 from human_review.workflow import ReviewWorkflow
+from identity.models import MembershipRole, Organization, OrganizationMembership, User
+from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
+from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 from tests.human_review.conftest import (
     make_bridge_resolution,
     make_record,
     make_review_resolution,
     match_authorization_kwargs,
 )
+
+# Readable, pinned identifiers. ``assert_opaque_id`` deliberately does not
+# require the generated 32-hex form, so a fixture can name a tenant something a
+# failing assertion is legible about while still exercising the production
+# validation path.
+ORGANIZATION_ID = "ORG-fixture-primary"
+ORGANIZATION_SLUG = "fixture-primary"
+REVIEW_QUEUE_ID = "RQ-fixture-primary"
+
+FIXTURE_USER_ID = "USR-fixture-reviewer"
+FIXTURE_USER_EMAIL = "fixture-reviewer@example.test"
+
+SECOND_ORGANIZATION_ID = "ORG-fixture-second"
+SECOND_ORGANIZATION_SLUG = "fixture-second"
+SECOND_REVIEW_QUEUE_ID = "RQ-fixture-second"
+
+PROVISIONED_AT = "2026-09-12T07:00:00Z"
 
 
 class FrozenClock:
@@ -63,9 +83,161 @@ def database(
         db.close()
 
 
+def provision_queue(
+    database: ReviewDatabase,
+    *,
+    organization_id: str = ORGANIZATION_ID,
+    slug: str = ORGANIZATION_SLUG,
+    review_queue_id: str = REVIEW_QUEUE_ID,
+    queue_name: str = "default",
+) -> ReviewQueue:
+    """Create an organization and one queue inside it, through production code.
+
+    Nothing in the tests inserts tenant rows by hand. Review data is owned by a
+    queue and a queue by an organization, so a fixture that bypassed
+    ``SqliteTenantRepository`` would be testing a graph the application cannot
+    actually produce.
+    """
+    tenants = SqliteTenantRepository(database)
+    tenants.create_organization(
+        Organization.create(
+            slug=slug,
+            display_name=slug,
+            created_at_utc=PROVISIONED_AT,
+            organization_id=organization_id,
+        )
+    )
+    return tenants.create_review_queue(
+        ReviewQueue.create(
+            organization_id=organization_id,
+            name=queue_name,
+            created_at_utc=PROVISIONED_AT,
+            review_queue_id=review_queue_id,
+        )
+    )
+
+
+def provision_membership(
+    database: ReviewDatabase,
+    *,
+    user_id: str = FIXTURE_USER_ID,
+    email: str = FIXTURE_USER_EMAIL,
+    organization_id: str = ORGANIZATION_ID,
+    role: MembershipRole = MembershipRole.REVIEWER,
+) -> OrganizationMembership:
+    """Create a user if needed and join them to an organization in one role.
+
+    Goes through ``SqliteTenantRepository`` rather than inserting rows, so the
+    membership a test authorizes against is one the application could actually
+    have produced. No credential is written: these fixtures authenticate by
+    overriding the principal dependency, and a password would be a secret in a
+    test that never verifies one.
+    """
+    tenants = SqliteTenantRepository(database)
+    if tenants.get_user(user_id) is None:
+        tenants.create_user(
+            User.create(
+                email=email,
+                display_name=user_id,
+                created_at_utc=PROVISIONED_AT,
+                user_id=user_id,
+            )
+        )
+    return tenants.create_membership(
+        OrganizationMembership.create(
+            organization_id=organization_id,
+            user_id=user_id,
+            role=role,
+            created_at_utc=PROVISIONED_AT,
+        )
+    )
+
+
+def set_membership_role(
+    database: ReviewDatabase,
+    *,
+    user_id: str,
+    organization_id: str,
+    role: MembershipRole,
+) -> None:
+    """Change a stored role directly, the way ``disable`` changes a user status.
+
+    ``SqliteTenantRepository`` deliberately exposes no role-management surface:
+    a membership's role is set when the membership is created, by an operator,
+    and Phase E did not add a mutation primitive just so a test could call one.
+    Adding one to production code to make a test convenient is how an
+    unnecessary write path gets shipped.
+
+    So the authoritative row is changed here, which is also the more honest
+    setup: the freshness tests are about authorization reading *current* state,
+    and writing that state out of band proves the read is genuinely fresh rather
+    than a value some service handed back.
+    """
+    database.connect().execute(
+        "UPDATE organization_memberships SET role = ? WHERE organization_id = ? AND user_id = ?",
+        (role.value, organization_id, user_id),
+    )
+
+
+def bound_repository(
+    database: ReviewDatabase,
+    clock: FrozenClock | None = None,
+) -> SqliteReviewCaseRepository:
+    """A repository on the fixture queue, provisioning it if the file is new.
+
+    The restart tests open their own databases, so they cannot use the
+    ``repository`` fixture. This gives them the same binding: the tenant rows
+    are created on first use and found again after a reopen, which is also how
+    a real installation behaves across a restart.
+    """
+    tenants = SqliteTenantRepository(database)
+    queue = tenants.get_review_queue(REVIEW_QUEUE_ID) or provision_queue(database)
+    if clock is None:
+        return SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id)
+    return SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id, clock=clock)
+
+
+def provision_second_queue(database: ReviewDatabase) -> ReviewQueue:
+    """A second tenant with its own queue, for the isolation tests."""
+    return provision_queue(
+        database,
+        organization_id=SECOND_ORGANIZATION_ID,
+        slug=SECOND_ORGANIZATION_SLUG,
+        review_queue_id=SECOND_REVIEW_QUEUE_ID,
+    )
+
+
 @pytest.fixture
-def repository(database: ReviewDatabase, clock: FrozenClock) -> SqliteReviewCaseRepository:
-    return SqliteReviewCaseRepository(database, clock=clock)
+def review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_queue(database)
+
+
+@pytest.fixture
+def second_review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_second_queue(database)
+
+
+@pytest.fixture
+def repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=review_queue.review_queue_id, clock=clock
+    )
+
+
+@pytest.fixture
+def second_repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    second_review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    """A repository bound to the other tenant's queue, over the same database."""
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=second_review_queue.review_queue_id, clock=clock
+    )
 
 
 @pytest.fixture

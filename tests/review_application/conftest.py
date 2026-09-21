@@ -10,12 +10,17 @@ from entity_resolution.models import ResolutionResult
 from human_review.cases import generate_review_cases
 from human_review.models import ReviewCase, ReviewWorkflowState
 from human_review.reporting import resolution_snapshot
+from review_application.queues import ReviewQueue
 from review_application.service import ReviewQueueService
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from tests.human_review.conftest import make_review_resolution
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import (
+    FrozenClock,
+    provision_queue,
+    provision_second_queue,
+)
 
 FROZEN_NOW = "2026-09-11T12:00:00Z"
 
@@ -77,13 +82,49 @@ def database(
 
 
 @pytest.fixture
-def repository(database: ReviewDatabase, clock: FrozenClock) -> SqliteReviewCaseRepository:
-    return SqliteReviewCaseRepository(database, clock=clock)
+def review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_queue(database)
+
+
+@pytest.fixture
+def second_review_queue(database: ReviewDatabase) -> ReviewQueue:
+    return provision_second_queue(database)
+
+
+@pytest.fixture
+def repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=review_queue.review_queue_id, clock=clock
+    )
+
+
+@pytest.fixture
+def second_repository(
+    database: ReviewDatabase,
+    clock: FrozenClock,
+    second_review_queue: ReviewQueue,
+) -> SqliteReviewCaseRepository:
+    return SqliteReviewCaseRepository(
+        database, review_queue_id=second_review_queue.review_queue_id, clock=clock
+    )
 
 
 @pytest.fixture
 def service(repository: SqliteReviewCaseRepository, clock: FrozenClock) -> ReviewQueueService:
     return ReviewQueueService(repository, clock=clock)
+
+
+@pytest.fixture
+def second_service(
+    second_repository: SqliteReviewCaseRepository,
+    clock: FrozenClock,
+) -> ReviewQueueService:
+    """A service over the other tenant's queue, sharing one database and clock."""
+    return ReviewQueueService(second_repository, clock=clock)
 
 
 def register(

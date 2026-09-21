@@ -1,0 +1,36 @@
+# Sprint 13 cookie authentication for the reviewer API.
+#
+# This file configures the local runtime the README documents: a browser on the
+# Vite dev/preview server, reaching FastAPI through the same-origin proxy. It is
+# not a deployment configuration.
+
+# The cookie carrying the opaque session token. Named for this application
+# rather than "session", because a name collision on localhost is a collision
+# between two credentials.
+session_cookie_name: dq_session
+
+# EXPLICITLY false, for the documented local HTTP runtime only.
+#
+# Without Secure, the cookie is sent over plain HTTP, so anyone on the path sees
+# a live bearer credential. That is acceptable here and nowhere else: the loader
+# refuses this setting unless every origin below is loopback, and
+# `python -m review_api` refuses to bind a non-loopback address -- so the value
+# cannot be combined with a real deployment's origins even by accident.
+#
+# A deployment removes this line. The default is true.
+session_cookie_secure: false
+
+# Exact origins accepted on state-changing requests (POST login, logout,
+# continue). Matched whole and normalized; there is no prefix, suffix or
+# wildcard matching, and an origin that is not listed is refused.
+#
+# These are the Vite dev server and its preview counterpart, which are what the
+# browser's page is served from. The API's own origin is absent on purpose: it
+# serves no HTML, so nothing legitimate originates there.
+#
+# This is not a CORS allow-list. No Access-Control-Allow-Origin header is ever
+# sent; the browser reaches the API same-origin through the Vite proxy, so there
+# is no cross-origin request to permit -- only forged ones to refuse.
+allowed_origins:
+  - http://127.0.0.1:5173
+  - http://127.0.0.1:4173

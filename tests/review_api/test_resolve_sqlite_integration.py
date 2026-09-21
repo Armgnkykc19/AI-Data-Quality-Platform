@@ -36,9 +36,16 @@ from entity_resolution.config import load_entity_resolution_config
 from human_review.cases import generate_review_cases
 from human_review.reporting import resolution_snapshot
 from review_api import create_app
-from review_application import ReviewQueueService
+from review_api.auth_config import AuthHttpConfig
+from review_api.dependencies import SqliteReviewQueueBinder
+from review_api.security import get_authenticated_principal
+from review_api.tenancy import TenantAuthorizationService
 from review_persistence.config import ReviewPersistenceConfig
-from review_persistence.sqlite import SqliteReviewCaseRepository, open_review_database
+from review_persistence.sqlite import (
+    SqliteReviewCaseRepository,
+    SqliteTenantRepository,
+    open_review_database,
+)
 from tests.human_review.conftest import (
     make_bridge_resolution,
     make_record,
@@ -46,9 +53,17 @@ from tests.human_review.conftest import (
     make_triangle_review_resolution,
 )
 from tests.review_api.conftest import NOW, records_by_id
+from tests.review_api.tenant_support import TEST_ORIGIN, make_principal, tenant_path
+from tests.review_persistence.conftest import (
+    FIXTURE_USER_ID,
+    ORGANIZATION_ID,
+    REVIEW_QUEUE_ID,
+    bound_repository,
+    provision_membership,
+)
 from tests.review_persistence.semantic_fixtures import make_suggestion
 
-BASE_URL = "/api/v1/review-cases"
+BASE_URL = tenant_path(organization_id=ORGANIZATION_ID, review_queue_id=REVIEW_QUEUE_ID)
 ER_CONFIG_PATH = "configs/entity_resolution.yaml"
 
 
@@ -79,7 +94,7 @@ def open_repository(config: ReviewPersistenceConfig) -> Iterator[SqliteReviewCas
     """A short-lived repository on the calling thread, for seeding and verifying."""
     database = open_review_database(config)
     try:
-        yield SqliteReviewCaseRepository(database)
+        yield bound_repository(database)
     finally:
         database.close()
 
@@ -112,6 +127,14 @@ def seed(
             entity_resolution_config_path=config_path,
             now_utc=NOW,
         )
+    database = open_review_database(persistence)
+    try:
+        # REVIEWER, because every request below attempts a resolution. The
+        # capability gets the caller as far as the domain and no further: what
+        # Sprint 08 then decides is the whole point of this file.
+        provision_membership(database)
+    finally:
+        database.close()
     return Queue(
         config=persistence,
         case_ids_by_pair={
@@ -129,25 +152,44 @@ async def queue_lifespan(app: FastAPI, config: ReviewPersistenceConfig) -> Async
     connection is legal only on its creating thread and ``TestClient`` serves on
     its own. This is the Phase A runtime constraint, unchanged: no
     ``check_same_thread``, no lock, no executor. Sprint 14 owns the redesign.
+
+    The service is not built here. It is built per authorized request by the
+    binder, from the queue id tenant authorization proved -- which is the whole
+    reason a single application can now serve more than one queue.
     """
     database = open_review_database(config)
     try:
-        repository = SqliteReviewCaseRepository(database)
-        app.state.repository = repository
-        app.state.service = ReviewQueueService(repository)
+        app.state.queue_binder = SqliteReviewQueueBinder(database)
+        app.state.tenant_authorization = TenantAuthorizationService(
+            SqliteTenantRepository(database)
+        )
         yield
     finally:
-        app.state.repository = None
-        app.state.service = None
+        app.state.queue_binder = None
+        app.state.tenant_authorization = None
         database.close()
 
 
 @contextmanager
 def api(config: ReviewPersistenceConfig) -> Iterator[TestClient]:
+    """An authenticated REVIEWER client for the fixture tenant.
+
+    Two substitutions, and only two: the principal dependency stands in for a
+    login, and the trusted ``Origin`` is set once as a client default rather
+    than repeated on every POST. Everything the file is actually about --
+    membership, queue binding, the Sprint 08 authority, CAS -- is production
+    code over a real database.
+    """
+
     def lifespan(app: FastAPI):
         return queue_lifespan(app, config)
 
-    with TestClient(create_app(lifespan=lifespan)) as client:
+    app = create_app(
+        lifespan=lifespan,
+        auth_config=AuthHttpConfig(session_cookie_secure=False, allowed_origins=(TEST_ORIGIN,)),
+    )
+    app.dependency_overrides[get_authenticated_principal] = lambda: make_principal(FIXTURE_USER_ID)
+    with TestClient(app, headers={"Origin": TEST_ORIGIN}) as client:
         yield client
 
 
@@ -261,7 +303,7 @@ def test_an_edge_dependent_severe_conflict_is_refused(bridge_queue: Queue) -> No
     with api(bridge_queue.config) as client:
         response = client.post(
             resolve_url(case_id),
-            json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-1"},
+            json={"decision": "MATCH", "expected_version": 1},
         )
 
     assert response.status_code == 422
@@ -282,7 +324,7 @@ def test_the_same_pair_is_allowed_without_the_auto_match_edges(
     with api(bridge_queue_without_edges.config) as client:
         response = client.post(
             resolve_url(case_id),
-            json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-1"},
+            json={"decision": "MATCH", "expected_version": 1},
         )
 
     assert response.status_code == 200
@@ -344,21 +386,21 @@ def test_a_transitive_no_match_constraint_survives_the_http_boundary(
         assert (
             client.post(
                 resolve_url(ids[("rec-a", "rec-c")]),
-                json={"decision": "NO_MATCH", "expected_version": 1, "reviewer_id": "rev-1"},
+                json={"decision": "NO_MATCH", "expected_version": 1},
             ).status_code
             == 200
         )
         assert (
             client.post(
                 resolve_url(ids[("rec-a", "rec-b")]),
-                json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-1"},
+                json={"decision": "MATCH", "expected_version": 1},
             ).status_code
             == 200
         )
 
         forbidden = client.post(
             resolve_url(ids[("rec-b", "rec-c")]),
-            json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-1"},
+            json={"decision": "MATCH", "expected_version": 1},
         )
 
     assert forbidden.status_code == 409
@@ -439,14 +481,14 @@ def test_each_decision_transitions_the_case(
         version = client.get(f"{BASE_URL}/{case_id}").json()["version"]
         response = client.post(
             resolve_url(case_id),
-            json={"decision": decision, "expected_version": version, "reviewer_id": "rev-9"},
+            json={"decision": decision, "expected_version": version},
         )
 
     assert response.status_code == 200
     body = response.json()
     assert body["case"]["status"] == expected_status
     assert body["case"]["resolution"]["human_decision"] == decision
-    assert body["case"]["resolution"]["reviewer_id"] == "rev-9"
+    assert body["case"]["resolution"]["reviewer_id"] == FIXTURE_USER_ID
     assert body["event"]["event_type"] == expected_event
     assert body["event"]["is_resolution"] is True
 
@@ -513,7 +555,7 @@ def test_the_resolution_survives_a_restart(simple_queue: Queue) -> None:
     with api(simple_queue.config) as client:
         client.post(
             resolve_url(case_id),
-            json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-restart"},
+            json={"decision": "MATCH", "expected_version": 1},
         )
 
     with api(simple_queue.config) as reopened:
@@ -522,7 +564,7 @@ def test_the_resolution_survives_a_restart(simple_queue: Queue) -> None:
 
     assert detail["status"] == "MATCH"
     assert detail["version"] == 2
-    assert detail["resolution"]["reviewer_id"] == "rev-restart"
+    assert detail["resolution"]["reviewer_id"] == FIXTURE_USER_ID
     assert [event["event_type"] for event in events if event["is_resolution"]] == ["MATCH"]
 
 
@@ -593,14 +635,13 @@ def test_two_reviewers_racing_one_case(simple_queue: Queue) -> None:
 
         first = client.post(
             resolve_url(case_id),
-            json={"decision": "MATCH", "expected_version": reviewer_a_version, "reviewer_id": "A"},
+            json={"decision": "MATCH", "expected_version": reviewer_a_version},
         )
         second = client.post(
             resolve_url(case_id),
             json={
                 "decision": "NO_MATCH",
                 "expected_version": reviewer_b_version,
-                "reviewer_id": "B",
             },
         )
 
@@ -616,13 +657,13 @@ def test_the_loser_of_a_race_changes_nothing(simple_queue: Queue) -> None:
     with api(simple_queue.config) as client:
         client.post(
             resolve_url(case_id),
-            json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "A"},
+            json={"decision": "MATCH", "expected_version": 1},
         )
         after_winner = durable_state(simple_queue.config, case_id)
 
         client.post(
             resolve_url(case_id),
-            json={"decision": "NO_MATCH", "expected_version": 1, "reviewer_id": "B"},
+            json={"decision": "NO_MATCH", "expected_version": 1},
         )
         after_loser = durable_state(simple_queue.config, case_id)
 
@@ -633,8 +674,8 @@ def test_the_loser_of_a_race_changes_nothing(simple_queue: Queue) -> None:
     assert after_winner.version == 2
     assert after_winner.resolution_event_count == 1
     assert detail["status"] == "MATCH"
-    assert detail["resolution"]["reviewer_id"] == "A"
-    assert [e["reviewer_id"] for e in events if e["is_resolution"]] == ["A"]
+    assert detail["resolution"]["reviewer_id"] == FIXTURE_USER_ID
+    assert [e["reviewer_id"] for e in events if e["is_resolution"]] == [FIXTURE_USER_ID]
 
 
 def test_resolving_a_terminal_case_at_its_current_version_is_a_different_conflict(

@@ -13,6 +13,7 @@ from review_persistence.config import (
 )
 from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
+    MIGRATION_REQUIRED_SCHEMA_VERSIONS,
     SUPPORTED_DATABASE_SCHEMA_VERSIONS,
     assert_supported_schema_version,
 )
@@ -20,6 +21,7 @@ from review_persistence.schema import (
 __all__ = [
     "DATABASE_SCHEMA_VERSION",
     "DEFAULT_REVIEW_PERSISTENCE_CONFIG",
+    "MIGRATION_REQUIRED_SCHEMA_VERSIONS",
     "SUPPORTED_DATABASE_SCHEMA_VERSIONS",
     "SUPPORTED_JOURNAL_MODES",
     "ReviewPersistenceConfig",

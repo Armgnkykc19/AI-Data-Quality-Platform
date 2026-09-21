@@ -18,17 +18,25 @@ from __future__ import annotations
 
 import pytest
 
-from tests.review_api.conftest import resolution_result, service_client
+from tests.review_api.conftest import CASES_URL, resolution_result, service_client
 from tests.review_api.fake_service import FakeReviewQueueService
 
 CASE_ID = "RC-cc90777b8be6026f"
-RESOLVE_URL = f"/api/v1/review-cases/{CASE_ID}/resolve"
+RESOLVE_URL = f"{CASES_URL}/{CASE_ID}/resolve"
 
 SENTINEL = "SENTINEL-FORBIDDEN-INPUT-3a77"
 
 # Authorization material, persistence metadata, and server-owned state. Nothing
 # here may be settable by a reviewer.
 FORBIDDEN_FIELDS = [
+    # The field Sprint 11 accepted. It is now exactly as forbidden as an
+    # AUTO_MATCH threshold, and for the same reason: it is an input to a
+    # decision the server owns. The tenant identifiers beside it are forbidden
+    # for a related reason -- the scope is the URL's, never the body's.
+    "reviewer_id",
+    "user_id",
+    "organization_id",
+    "review_queue_id",
     "authorization_context",
     "records_by_id",
     "records",
@@ -237,58 +245,49 @@ def test_a_bool_is_not_a_version() -> None:
 
 
 # --------------------------------------------------------------------------
-# reviewer_id
+# reviewer_id: removed from the contract, and refused rather than ignored
 # --------------------------------------------------------------------------
 
 
-def test_reviewer_id_may_be_omitted() -> None:
+def test_the_request_is_accepted_with_exactly_two_fields() -> None:
+    """A decision and a version. There is nothing else a client may send."""
     response, service = post({"decision": "MATCH", "expected_version": 1})
 
     assert response.status_code == 200
-    assert service.calls[0].reviewer_id is None
+    assert service.calls[0].expected_version == 1
 
 
-def test_reviewer_id_may_be_null() -> None:
-    response, service = post(
-        {"decision": "MATCH", "expected_version": 1, "reviewer_id": None},
-    )
+@pytest.mark.parametrize(
+    "value",
+    ["someone-else", "", None, "x" * 257, 123, 4.5, True, ["a"], {"id": "a"}],
+)
+def test_no_shape_of_reviewer_id_is_accepted(value: object) -> None:
+    """The field is gone, so every spelling of it is an unrecognised key.
 
-    assert response.status_code == 200
-    assert service.calls[0].reviewer_id is None
-
-
-def test_an_empty_reviewer_id_is_passed_through() -> None:
-    """The domain already accepts it; rejecting it here would invent a rule.
-
-    Reviewer identity is unverified in Sprint 11 and Sprint 13 owns it. Adding
-    an emptiness rule now would change what the audit trail records for a reason
-    this sprint cannot justify.
+    Parametrized over the values that used to be meaningful -- a name, an empty
+    string, an explicit null, an overlong string, a non-string -- because each
+    of them was once a documented behaviour, and each must now fail the same
+    way. A ``null`` that was quietly accepted would be the most dangerous of
+    them: it would look like "no reviewer" while the server was in fact
+    recording one.
     """
-    response, service = post({"decision": "MATCH", "expected_version": 1, "reviewer_id": ""})
-
-    assert response.status_code == 200
-    assert service.calls[0].reviewer_id == ""
-
-
-def test_an_overlong_reviewer_id_is_rejected() -> None:
-    """Transport hygiene: it ends up in a durable append-only row."""
-    response, service = post(
-        {"decision": "MATCH", "expected_version": 1, "reviewer_id": "x" * 257},
-    )
-
-    assert response.status_code == 422
-    assert service.calls == []
-
-
-@pytest.mark.parametrize("value", [123, 4.5, True, ["a"], {"id": "a"}])
-def test_a_non_string_reviewer_id_is_rejected(value: object) -> None:
-    """Strict again: coercing 123 into "123" would record an identity nobody sent."""
     response, service = post(
         {"decision": "MATCH", "expected_version": 1, "reviewer_id": value},
     )
 
     assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
     assert service.calls == []
+
+
+def test_a_spoofed_reviewer_id_is_not_echoed() -> None:
+    """The rejected key is named; the identity someone tried to forge is not."""
+    response, _ = post(
+        {"decision": "MATCH", "expected_version": 1, "reviewer_id": SENTINEL},
+    )
+
+    assert "reviewer_id" in response.text
+    assert SENTINEL not in response.text
 
 
 # --------------------------------------------------------------------------
@@ -316,7 +315,7 @@ def test_an_empty_path_id_does_not_reach_the_service() -> None:
     """No RC-* pattern is restated here; only bounds. Existence is storage's answer."""
     service = fresh_service()
     response = service_client(service).post(
-        "/api/v1/review-cases//resolve", json={"decision": "MATCH", "expected_version": 1}
+        f"{CASES_URL}//resolve", json={"decision": "MATCH", "expected_version": 1}
     )
 
     assert response.status_code in (404, 422)
@@ -326,7 +325,7 @@ def test_an_empty_path_id_does_not_reach_the_service() -> None:
 def test_an_overlong_path_id_is_rejected() -> None:
     service = fresh_service()
     response = service_client(service).post(
-        f"/api/v1/review-cases/{'x' * 200}/resolve",
+        f"{CASES_URL}/{'x' * 200}/resolve",
         json={"decision": "MATCH", "expected_version": 1},
     )
 
@@ -338,7 +337,7 @@ def test_an_unknown_shaped_id_still_reaches_the_service() -> None:
     """The API does not pre-judge identifier syntax; the queue decides existence."""
     service = fresh_service()
     response = service_client(service).post(
-        "/api/v1/review-cases/not-an-rc-id/resolve",
+        f"{CASES_URL}/not-an-rc-id/resolve",
         json={"decision": "MATCH", "expected_version": 1},
     )
 

@@ -57,9 +57,10 @@ from semantic_review.models import (
 )
 
 # Bounds for the list endpoint. A default small enough to be a sane page and a
-# ceiling low enough that no single request can pull the whole queue: this API
-# has no authentication, so "how much can one unauthenticated caller ask for at
-# once" is a real question.
+# ceiling low enough that no single request can pull a whole queue in one go.
+# Authentication narrows who may ask; it does not make an unbounded page a good
+# idea, because the caller is now an authorized member whose one request would
+# otherwise materialize every case their tenant holds.
 DEFAULT_PAGE_LIMIT = 50
 MAX_PAGE_LIMIT = 200
 
@@ -70,13 +71,16 @@ MAX_PAGE_LIMIT = 200
 # answer to give.
 MAX_REVIEW_CASE_ID_LENGTH = 128
 
-# A bound, and deliberately nothing more. The domain stores reviewer_id
-# verbatim into an append-only audit row, so any normalisation here -- a strip,
-# a case fold, an emptiness rule -- would silently change recorded audit
-# identity. Sprint 11 does not verify who a reviewer is; inventing identity
-# rules ahead of the sprint that owns them would be guessing. The length cap is
-# transport hygiene: an unbounded string still ends up in a durable row.
-MAX_REVIEWER_ID_LENGTH = 256
+# The two tenant path segments. Bounds only, matching MAX_OPAQUE_ID_LENGTH in
+# ``identity.ids`` -- the transport layer does not restate the ``ORG-``/``RQ-``
+# prefix rule, because a second copy of an identifier format is a second thing
+# to keep in step.
+#
+# There is no MAX_REVIEWER_ID_LENGTH any more, and no bound to put on one: a
+# tenant-scoped resolution has no client-supplied reviewer field. The server
+# derives reviewer identity from the authenticated principal, so the only bound
+# that matters is the one ``identity`` already enforces on a user_id.
+MAX_TENANT_ID_LENGTH = 128
 
 
 class ApiResponseModel(BaseModel):
@@ -358,6 +362,24 @@ class SemanticSuggestionRead(ApiResponseModel):
 # that accepts a string is a token whose type the client and server disagree
 # about, and an audit identity that accepts a number records something the
 # reviewer did not send.
+# Two fields, and no third.
+#
+# Sprint 11 accepted a client-supplied reviewer label here, which was honest
+# while the API had no accounts and is unacceptable now that it has. Who
+# recorded a decision is not something a client gets to assert: the server takes
+# it from the authenticated principal and hands that to the domain, so the
+# durable audit row names the session that was actually used.
+#
+# Dropping the field is not enough on its own -- an ignored field looks
+# accepted. ``extra="forbid"`` on ``ApiRequestModel`` is what turns a body
+# carrying a forged reviewer identity into a 422 that never reaches the
+# authority, so an attempt to sign a decision as another person fails loudly
+# instead of silently becoming an anonymous one.
+#
+# The rationale lives in a comment rather than the docstring because Pydantic
+# publishes a model's docstring as the schema ``description``, and a published
+# description naming a field is a field a code generator's reader will look
+# for.
 class ResolveReviewCaseRequest(ApiRequestModel):
     """One human decision, as a reviewer submits it."""
 
@@ -366,12 +388,6 @@ class ResolveReviewCaseRequest(ApiRequestModel):
         strict=True,
         ge=1,
         description="The case version the reviewer had in front of them.",
-    )
-    reviewer_id: str | None = Field(
-        default=None,
-        strict=True,
-        max_length=MAX_REVIEWER_ID_LENGTH,
-        description="Unverified audit label. Not an authenticated identity.",
     )
 
 

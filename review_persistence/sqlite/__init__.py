@@ -1,10 +1,17 @@
 """SQLite implementation of the review queue persistence contract.
 
-Phase B provided the connection foundation, the row/domain mapper, and
-insert-if-absent case storage; Phase C added the workflow authorization context
-and complete bundle reconstruction; Phase D added atomic, versioned resolution
-and the append-only event history; Phase E added immutable advisory storage for
-Sprint 09 semantic suggestions, completing the repository Protocol.
+Sprint 10 built this up in phases: the connection foundation and row/domain
+mapper, then the workflow authorization context and bundle reconstruction, then
+atomic versioned resolution with append-only history, then immutable advisory
+storage for Sprint 09 semantic suggestions.
+
+Sprint 13 added the tenant graph and the authentication store.
+``SqliteTenantRepository`` owns organizations, users, memberships and review
+queues; ``SqliteReviewCaseRepository`` is bound to exactly one of those queues
+and scopes every statement to it; ``SqliteCredentialRepository`` and
+``SqliteSessionRepository`` hold password verifiers and sessions. All of them
+live in the same database file, because the foreign keys that make tenant
+ownership and credential ownership real cannot span two of them.
 """
 
 from review_persistence.sqlite.context_mapper import (
@@ -13,6 +20,7 @@ from review_persistence.sqlite.context_mapper import (
     entity_records_to_payload,
     normalized_context_fingerprint,
 )
+from review_persistence.sqlite.credential_repository import SqliteCredentialRepository
 from review_persistence.sqlite.database import (
     Clock,
     ReviewDatabase,
@@ -32,6 +40,7 @@ from review_persistence.sqlite.mapper import (
     review_case_from_payload,
     row_to_persisted_case,
 )
+from review_persistence.sqlite.provisioning_repository import SqliteUserProvisioningRepository
 from review_persistence.sqlite.review_repository import (
     SqliteReviewCaseRepository,
     StoredWorkflowContext,
@@ -44,6 +53,8 @@ from review_persistence.sqlite.semantic_mapper import (
     suggestion_payload,
     suggestion_to_row,
 )
+from review_persistence.sqlite.session_repository import SqliteSessionRepository
+from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 
 __all__ = [
     "REVIEW_CASE_COLUMNS",
@@ -52,7 +63,11 @@ __all__ = [
     "SEMANTIC_SUGGESTION_COLUMNS",
     "Clock",
     "ReviewDatabase",
+    "SqliteCredentialRepository",
     "SqliteReviewCaseRepository",
+    "SqliteSessionRepository",
+    "SqliteTenantRepository",
+    "SqliteUserProvisioningRepository",
     "StoredWorkflowContext",
     "assert_is_sprint_09_suggestion",
     "canonical_json",

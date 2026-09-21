@@ -25,6 +25,7 @@ from review_persistence.schema import DATABASE_SCHEMA_VERSION
 # Insert order. event_id is omitted: it is AUTOINCREMENT, and letting a caller
 # choose it would make "append-only" depend on the caller's arithmetic.
 REVIEW_EVENT_INSERT_COLUMNS: tuple[str, ...] = (
+    "review_queue_id",
     "review_case_id",
     "event_type",
     "resolution_sequence",
@@ -38,7 +39,7 @@ REVIEW_EVENT_INSERT_COLUMNS: tuple[str, ...] = (
 REVIEW_EVENT_SELECT_COLUMNS: tuple[str, ...] = ("event_id", *REVIEW_EVENT_INSERT_COLUMNS)
 
 
-def event_to_row(event: ReviewEvent) -> tuple[Any, ...]:
+def event_to_row(event: ReviewEvent, *, review_queue_id: str) -> tuple[Any, ...]:
     """Project a ReviewEvent onto the review_case_events insert tuple.
 
     The schema version is stamped here, not taken from the caller: it describes
@@ -46,6 +47,11 @@ def event_to_row(event: ReviewEvent) -> tuple[Any, ...]:
     knows. An event that already declares a different one is refused rather than
     silently relabelled -- that would mean re-writing history under a version
     that never wrote it.
+
+    ``review_queue_id`` comes from the repository's queue binding for the same
+    reason the case row's does: ``ReviewEvent`` is an application object and
+    carries no tenant field. The composite foreign key then rejects the row
+    outright if that queue does not own the named case.
     """
     if event.schema_version is not None and event.schema_version != DATABASE_SCHEMA_VERSION:
         raise ReviewEventIntegrityError(
@@ -54,6 +60,7 @@ def event_to_row(event: ReviewEvent) -> tuple[Any, ...]:
         )
     payload = event.audit_entry_payload
     return (
+        review_queue_id,
         event.review_case_id,
         event.event_type.value,
         event.resolution_sequence,

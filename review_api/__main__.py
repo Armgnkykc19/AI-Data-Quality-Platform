@@ -52,9 +52,13 @@ WORKERS = 1
 MIN_PORT = 1
 MAX_PORT = 65535
 
+# Both steps, because registration names a tenant that must already exist and
+# will not be created for the operator. Printing only the second line would
+# send them into an error they have no obvious way to resolve.
 BOOTSTRAP_COMMAND = (
+    "python scripts/manage_human_review.py create-organization --slug <slug> --name <name>; "
     "python scripts/manage_human_review.py generate <input> "
-    "--report-dir <dir> --register-review-queue"
+    "--report-dir <dir> --register-review-queue --organization <slug>"
 )
 
 EXIT_OK = 0

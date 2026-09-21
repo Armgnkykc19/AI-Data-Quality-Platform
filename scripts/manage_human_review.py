@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import sys
 from collections.abc import Sequence
@@ -24,26 +25,58 @@ from human_review.reporting import (  # noqa: E402
     write_review_reports,
 )
 from human_review.workflow import ReviewWorkflow  # noqa: E402
+from identity.errors import (  # noqa: E402
+    IdentityError,
+    IdentityNotFoundError,
+    IdentityValidationError,
+)
+from identity.models import MembershipRole, Organization, OrganizationMembership  # noqa: E402
+from identity.passwords import Argon2idPasswordHasher  # noqa: E402
+from identity.provisioning import UserProvisioningService  # noqa: E402
 from ingestion.config import load_ingestion_config  # noqa: E402
 from ingestion.errors import IngestionError  # noqa: E402
 from ingestion.parser import parse_file  # noqa: E402
 from record_quality.pipeline import run_quality_pipeline  # noqa: E402
 from review_application import (  # noqa: E402
     ReviewApplicationError,
-    ReviewQueueRegistration,
-    register_review_queue,
+    ReviewQueue,
+    ReviewWorkflowRegistration,
+    register_review_workflow,
 )
 
 # This command is a composition root, so naming the concrete backend here is the
 # point rather than a leak: it is the one place that decides the durable queue is
-# the Sprint 10 SQLite database. ``register_review_queue`` above it only ever
+# the Sprint 10 SQLite database. ``register_review_workflow`` above it only ever
 # sees the repository Protocol.
 from review_persistence import load_review_persistence_config  # noqa: E402
 from review_persistence.sqlite import (  # noqa: E402
     ReviewDatabase,
     SqliteReviewCaseRepository,
+    SqliteTenantRepository,
+    SqliteUserProvisioningRepository,
     open_review_database,
 )
+
+EXIT_OK = 0
+EXIT_USAGE = 1
+EXIT_INGESTION = 2
+EXIT_REPORT = 3
+EXIT_POLICY = 4
+EXIT_REGISTRATION_REFUSED = 5
+EXIT_TENANT_REFUSED = 6
+
+
+def _add_review_db_argument(parser: argparse.ArgumentParser) -> None:
+    """The one way any subcommand names a database other than the configured one."""
+    parser.add_argument(
+        "--review-db",
+        type=Path,
+        default=None,
+        help=(
+            "Override the review queue database path. Defaults to the path in "
+            "configs/review_persistence.yaml."
+        ),
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,10 +85,70 @@ def parse_args() -> argparse.Namespace:
         epilog=(
             "Exit codes: 0 success, 1 usage, 2 ingestion, "
             "3 report/IO error, 4 human-review policy rejection, "
-            "5 review queue registration refused."
+            "5 review queue registration refused, 6 organization/tenant refused."
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Tenant provisioning. Separate commands rather than flags on `generate`,
+    # because creating a tenant is a decision an operator makes once and
+    # deliberately -- not something that should happen as a side effect of
+    # registering a workflow with a mistyped slug.
+    create_organization_parser = subparsers.add_parser(
+        "create-organization",
+        help="Create an organization that can own review queues.",
+    )
+    create_organization_parser.add_argument("--slug", type=str, required=True)
+    create_organization_parser.add_argument("--name", type=str, required=True)
+    _add_review_db_argument(create_organization_parser)
+
+    list_organizations_parser = subparsers.add_parser(
+        "list-organizations", help="List the organizations in the review database."
+    )
+    _add_review_db_argument(list_organizations_parser)
+
+    # A login-capable person. Deliberately no --password: an argument is
+    # visible in shell history and in the process list of every other user on
+    # the machine, which are two places a credential must never be.
+    create_user_parser = subparsers.add_parser(
+        "create-user",
+        help="Create a user who can sign in. Prompts for the password.",
+    )
+    create_user_parser.add_argument("--email", type=str, required=True)
+    create_user_parser.add_argument("--display-name", type=str, required=True)
+    _add_review_db_argument(create_user_parser)
+
+    # Joining a user to an organization in one role. Every part is explicit and
+    # nothing is inferred: no default role, no "the only organization", and no
+    # creation of either side. A membership is what makes a tenant's review data
+    # reachable at all, so granting one is an operator decision that must be
+    # typed out in full.
+    #
+    # There is no HTTP counterpart to this command and there must not be. An
+    # endpoint that granted memberships would be an endpoint that grants access
+    # to customer review evidence, reachable with a stolen cookie.
+    add_membership_parser = subparsers.add_parser(
+        "add-membership",
+        help="Grant an existing user a role in an existing organization.",
+    )
+    add_membership_parser.add_argument("--user", type=str, required=True)
+    add_membership_parser.add_argument("--organization", type=str, required=True)
+    add_membership_parser.add_argument(
+        "--role",
+        type=str,
+        choices=[role.value for role in MembershipRole],
+        required=True,
+        help="VIEWER may read the queue; REVIEWER may also record decisions.",
+    )
+    _add_review_db_argument(add_membership_parser)
+
+    create_queue_parser = subparsers.add_parser(
+        "create-review-queue",
+        help="Create a review queue inside an existing organization.",
+    )
+    create_queue_parser.add_argument("--organization", type=str, required=True)
+    create_queue_parser.add_argument("--name", type=str, required=True)
+    _add_review_db_argument(create_queue_parser)
 
     generate_parser = subparsers.add_parser(
         "generate", help="Generate review cases from input data."
@@ -70,15 +163,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Also register the generated workflow into the durable review queue.",
     )
+    # Neither the tenant nor the queue is ever inferred, and this command
+    # creates neither. Both must already exist, named explicitly, because
+    # provisioning a tenant resource and generating a workflow are two
+    # different operator decisions: a missing argument or a misspelled name
+    # must fail, not manufacture a queue nobody asked for.
+    #
+    # Declared without `required=True` because they are required only alongside
+    # --register-review-queue, which argparse cannot express; the check lives
+    # in main() and produces one message covering both.
     generate_parser.add_argument(
-        "--review-db",
-        type=Path,
+        "--organization",
+        type=str,
+        default=None,
+        help="Slug of the organization that owns the queue. Required with --register-review-queue.",
+    )
+    generate_parser.add_argument(
+        "--review-queue",
+        type=str,
         default=None,
         help=(
-            "Override the review queue database path. Defaults to the path in "
-            "configs/review_persistence.yaml."
+            "Name of an existing review queue within the organization. Required with "
+            "--register-review-queue. Create it first with 'create-review-queue'."
         ),
     )
+    _add_review_db_argument(generate_parser)
 
     list_parser = subparsers.add_parser("list", help="List review cases from a saved report.")
     list_parser.add_argument("report_path", type=Path)
@@ -132,8 +241,12 @@ def _open_review_queue(review_db: Path | None) -> tuple[ReviewDatabase, Path]:
     return database, config.database_path
 
 
-def _print_registration(database_path: Path, registration: ReviewQueueRegistration) -> None:
-    """Counts and a path. Never a record, a value, or an AUTO_MATCH edge.
+def _print_registration(
+    database_path: Path,
+    queue: ReviewQueue,
+    registration: ReviewWorkflowRegistration,
+) -> None:
+    """Counts, a path, and which queue was written. Never a record or an edge.
 
     An operator needs to know which queue was written and how much of it is
     still waiting for a reviewer; everything else in a workflow is customer
@@ -144,7 +257,8 @@ def _print_registration(database_path: Path, registration: ReviewQueueRegistrati
     would both be guesses -- the case counts cannot tell whether the stored
     authorization context is new.
     """
-    print(f"Review queue: {database_path}")
+    print(f"Database: {database_path}")
+    print(f"Review queue: {queue.name} ({queue.review_queue_id})")
     print(
         f"Cases: {registration.total_cases} total "
         f"({registration.pending_cases} pending, {registration.resolved_cases} resolved)."
@@ -155,6 +269,71 @@ def _print_registration(database_path: Path, registration: ReviewQueueRegistrati
         print("This workflow was already registered; no case was written.")
 
 
+def _missing_registration_targets(args: argparse.Namespace) -> list[str]:
+    """Which registration targets the operator left unnamed, if any.
+
+    Both are reported together rather than one at a time, so an operator who
+    omitted both is not sent round the loop twice. Returns an empty list when
+    registration was not requested at all.
+    """
+    if not args.register_review_queue:
+        return []
+    return [
+        flag
+        for flag, value in (
+            ("--organization <slug>", args.organization),
+            ("--review-queue <name>", args.review_queue),
+        )
+        if not value
+    ]
+
+
+def _require_organization(tenants: SqliteTenantRepository, slug: str) -> Organization:
+    """Resolve a slug to an existing organization, or refuse.
+
+    Never creates one. A command that manufactured a tenant from an unmatched
+    slug would turn a typo into a new customer, and every review case
+    registered afterwards would belong to it.
+    """
+    organization = tenants.get_organization_by_slug(slug)
+    if organization is None:
+        raise IdentityNotFoundError(
+            f"No organization has the slug {slug!r}. Create it first with "
+            "'create-organization'; this command will not create one for you."
+        )
+    return organization
+
+
+def _require_review_queue(
+    tenants: SqliteTenantRepository,
+    *,
+    organization: Organization,
+    name: str,
+) -> ReviewQueue:
+    """Resolve an existing queue inside this organization, or refuse.
+
+    Never creates one. Registering a workflow and provisioning a queue are two
+    different operator decisions, and a command that did both would turn a
+    misspelled queue name into a new, empty, permanently orphaned queue --
+    silently, and inside a real tenant.
+
+    The lookup is scoped to the organization, so a queue of that name owned by
+    a *different* organization is simply absent here. The operator is told the
+    queue does not exist in the organization they named, and learns nothing
+    about who else might own one.
+    """
+    queue = tenants.get_review_queue_by_name(
+        organization_id=organization.organization_id, name=name
+    )
+    if queue is None:
+        raise IdentityNotFoundError(
+            f"Review queue {name!r} does not exist in organization "
+            f"{organization.slug!r}. Create it explicitly with 'create-review-queue' "
+            "before registering a workflow; this command will not create one for you."
+        )
+    return queue
+
+
 def _register_queue(
     state: ReviewWorkflowState,
     *,
@@ -162,17 +341,30 @@ def _register_queue(
     resolution: ResolutionResult,
     entity_resolution_config_path: Path,
     review_db: Path | None,
+    organization_slug: str,
+    queue_name: str,
 ) -> int:
-    """Persist the generated workflow into the durable queue.
+    """Persist the generated workflow into one existing review queue.
+
+    Both the organization and the queue are resolved before anything is
+    written, and neither is created. This command generates a workflow; it does
+    not provision tenant resources.
 
     The config path is stored with the context so a later resolution authorizes
     against the thresholds the queue was generated with, rather than whatever
     the default config happens to say by then.
+
+    The repository is bound to the resolved queue, so every row this writes --
+    context, cases, and their future history -- is owned by that queue and,
+    through it, by exactly one organization.
     """
     database, database_path = _open_review_queue(review_db)
     try:
-        registration = register_review_queue(
-            SqliteReviewCaseRepository(database),
+        tenants = SqliteTenantRepository(database)
+        organization = _require_organization(tenants, organization_slug)
+        queue = _require_review_queue(tenants, organization=organization, name=queue_name)
+        registration = register_review_workflow(
+            SqliteReviewCaseRepository(database, review_queue_id=queue.review_queue_id),
             state=state,
             entity_records=records,
             resolution=resolution,
@@ -180,8 +372,167 @@ def _register_queue(
         )
     finally:
         database.close()
-    _print_registration(database_path, registration)
-    return 0
+    print(f"Organization: {organization.slug} ({organization.organization_id})")
+    _print_registration(database_path, queue, registration)
+    return EXIT_OK
+
+
+def _create_organization(args: argparse.Namespace) -> int:
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        tenants = SqliteTenantRepository(database)
+        organization = tenants.create_organization(
+            Organization.create(
+                slug=args.slug,
+                display_name=args.name,
+                created_at_utc=tenants.timestamp(),
+            )
+        )
+    finally:
+        database.close()
+    print(f"Database: {database_path}")
+    print(f"Created organization {organization.slug} ({organization.organization_id}).")
+    return EXIT_OK
+
+
+def _list_organizations(args: argparse.Namespace) -> int:
+    """Slugs and ids only. An operator needs to know what to pass, nothing else."""
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        organizations = SqliteTenantRepository(database).list_organizations()
+    finally:
+        database.close()
+    print(f"Database: {database_path}")
+    if not organizations:
+        print("No organizations are registered.")
+        return EXIT_OK
+    for organization in organizations:
+        print(f"{organization.slug}\t{organization.organization_id}\t{organization.status.value}")
+    return EXIT_OK
+
+
+def _prompt_for_password() -> str | None:
+    """Read a password twice without echoing it, or return None on mismatch.
+
+    ``getpass`` rather than ``input``: it keeps the characters off the screen
+    and out of the terminal's scrollback, which is where a shoulder-surfer and
+    a screen recording both look.
+
+    Confirmation is required because this is the only chance to get it right --
+    there is no reset flow, so a typo would produce an account nobody can sign
+    into and no one could diagnose. On mismatch nothing is written; the
+    operator runs the command again.
+
+    Neither value is echoed, logged, or placed in an error message on any path.
+    """
+    password = getpass.getpass("Password: ")
+    confirmation = getpass.getpass("Confirm password: ")
+    if password != confirmation:
+        return None
+    return password
+
+
+def _create_user(args: argparse.Namespace) -> int:
+    """Create a user and their first password, atomically.
+
+    The password is read before the database is opened, so an operator who
+    mistypes the confirmation never touches storage at all.
+    """
+    password = _prompt_for_password()
+    if password is None:
+        print("The passwords did not match. No user was created.")
+        return EXIT_USAGE
+
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        service = UserProvisioningService(
+            provisioning=SqliteUserProvisioningRepository(database),
+            hasher=Argon2idPasswordHasher(),
+        )
+        user = service.provision_user(
+            email=args.email,
+            display_name=args.display_name,
+            password=password,
+        )
+    finally:
+        database.close()
+
+    # The identifier and the address the operator typed. Never the password,
+    # never the hash, and never anything derived from either.
+    print(f"Database: {database_path}")
+    print(f"Created user {user.email} ({user.user_id}).")
+    print("This user has no organization membership yet, and can therefore reach no queue.")
+    print("Grant one with: add-membership --user <email> --organization <slug> --role <ROLE>")
+    return EXIT_OK
+
+
+def _add_membership(args: argparse.Namespace) -> int:
+    """Join one existing user to one existing organization in one explicit role.
+
+    Creates neither side. A user who does not exist is refused rather than
+    provisioned, because provisioning one here would mean an account with no
+    password that nobody can sign into; an organization that does not exist is
+    refused because a typo must not become a tenant.
+
+    Duplicates are deterministic: a user holds exactly one membership per
+    organization, enforced by the schema, so a second grant is refused with the
+    tenant exit code and the stored role is left exactly as it was. Changing
+    someone's role is therefore not something this command can do by accident.
+
+    The role is required and has no default. A default would be a silent
+    decision about whether someone may record human decisions on customer data.
+    """
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        tenants = SqliteTenantRepository(database)
+        organization = _require_organization(tenants, args.organization)
+        user = tenants.get_user_by_email(args.user)
+        if user is None:
+            # The address is not echoed back into a "no such user" message: this
+            # command is operator-only today, and a message that quotes the
+            # address is an account oracle the moment anything else can reach it.
+            raise IdentityNotFoundError(
+                "No user has that login address. Create one first with 'create-user'; "
+                "this command will not create one for you."
+            )
+        membership = tenants.create_membership(
+            OrganizationMembership.create(
+                organization_id=organization.organization_id,
+                user_id=user.user_id,
+                role=MembershipRole(args.role),
+                created_at_utc=tenants.timestamp(),
+            )
+        )
+    finally:
+        database.close()
+    print(f"Database: {database_path}")
+    print(
+        f"Granted {membership.role.value} in organization {organization.slug} "
+        f"to user {user.user_id}."
+    )
+    return EXIT_OK
+
+
+def _create_review_queue(args: argparse.Namespace) -> int:
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        tenants = SqliteTenantRepository(database)
+        organization = _require_organization(tenants, args.organization)
+        queue = tenants.create_review_queue(
+            ReviewQueue.create(
+                organization_id=organization.organization_id,
+                name=args.name,
+                created_at_utc=tenants.timestamp(),
+            )
+        )
+    finally:
+        database.close()
+    print(f"Database: {database_path}")
+    print(
+        f"Created review queue {queue.name!r} ({queue.review_queue_id}) "
+        f"in organization {organization.slug}."
+    )
+    return EXIT_OK
 
 
 def _generate(args: argparse.Namespace) -> int:
@@ -201,23 +552,49 @@ def _generate(args: argparse.Namespace) -> int:
     print(f"Report: {report_path}")
 
     if not args.register_review_queue:
-        return 0
+        return EXIT_OK
     return _register_queue(
         state,
         records=records,
         resolution=resolution,
         entity_resolution_config_path=args.entity_resolution_config,
         review_db=args.review_db,
+        organization_slug=args.organization,
+        queue_name=args.review_queue,
     )
 
 
 def main() -> int:
     args = parse_args()
     try:
+        if args.command == "create-organization":
+            return _create_organization(args)
+        if args.command == "list-organizations":
+            return _list_organizations(args)
+        if args.command == "create-user":
+            return _create_user(args)
+        if args.command == "add-membership":
+            return _add_membership(args)
+        if args.command == "create-review-queue":
+            return _create_review_queue(args)
+
         if args.command == "generate":
             if args.review_db is not None and not args.register_review_queue:
                 print("--review-db has no effect without --register-review-queue.")
-                return 1
+                return EXIT_USAGE
+            missing = _missing_registration_targets(args)
+            if missing:
+                # Refused up front rather than defaulted. Neither a tenant nor
+                # a queue has a sensible default: review data owned by an
+                # organization nobody named is review data nobody owns, and a
+                # queue conjured from an omitted argument is a tenant resource
+                # created by accident.
+                print(
+                    f"--register-review-queue requires {' and '.join(missing)}. "
+                    "Both must already exist; create them with 'create-organization' "
+                    "and 'create-review-queue' first."
+                )
+                return EXIT_USAGE
             return _generate(args)
 
         loaded = load_human_review_report(args.report_path)
@@ -228,12 +605,12 @@ def main() -> int:
                     f"{case.review_case_id}\t{case.status.value}\t"
                     f"{case.pair.record_a_id}\t{case.pair.record_b_id}"
                 )
-            return 0
+            return EXIT_OK
 
         if args.command == "inspect":
             case = workflow.get_case(args.review_case_id)
             print(json.dumps(case.to_dict(), indent=2, ensure_ascii=False))
-            return 0
+            return EXIT_OK
 
         if args.command == "resolve":
             config_path = (
@@ -275,28 +652,38 @@ def main() -> int:
             )
             print(f"Resolved {args.review_case_id} as {args.decision}.")
             print(f"Report: {report_path}")
-            return 0
+            return EXIT_OK
 
-        return 1
+        return EXIT_USAGE
     except IngestionError as exc:
         print(f"Ingestion error [{exc.code}]: {exc.message}")
-        return 2
+        return EXIT_INGESTION
     except HumanReviewReportError as exc:
         print(f"Review report error: {exc}")
-        return 3
+        return EXIT_REPORT
     except HumanReviewError as exc:
         print(f"Human review rejected: {exc}")
-        return 4
+        return EXIT_POLICY
+    except IdentityValidationError as exc:
+        # A rejected password or a malformed address. The message names the
+        # rule that was broken and never the value that broke it.
+        print(f"Invalid input: {exc}")
+        return EXIT_USAGE
+    except IdentityError as exc:
+        # A tenant problem, not a review problem: an unknown slug, a duplicate
+        # organization, a queue name already taken. Nothing was written.
+        print(f"Organization/tenant refused: {exc}")
+        return EXIT_TENANT_REFUSED
     except ReviewApplicationError as exc:
         # Every one of these means the stored queue was left exactly as it was:
         # a changed record set, a changed AUTO_MATCH snapshot, a different
         # entity-resolution config, or storage itself refusing. The operator
         # gets the refusal, not a traceback.
         print(f"Review queue registration refused: {exc}")
-        return 5
+        return EXIT_REGISTRATION_REFUSED
     except (OSError, ValueError, KeyError) as exc:
         print(f"Human review command failed: {exc}")
-        return 3
+        return EXIT_REPORT
 
 
 if __name__ == "__main__":
