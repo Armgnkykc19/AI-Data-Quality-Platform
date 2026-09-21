@@ -66,6 +66,7 @@ from identity.models import (
     MembershipRole,
     Organization,
     OrganizationMembership,
+    OrganizationStatus,
     User,
     UserStatus,
 )
@@ -173,6 +174,22 @@ class AuthFixture:
     def create_organization(self, slug: str) -> Organization:
         return self.tenants.create_organization(
             Organization.create(slug=slug, display_name=slug, created_at_utc=PROVISIONED_AT)
+        )
+
+    def suspend(self, organization: Organization) -> None:
+        """Suspend a tenant by writing the authoritative column.
+
+        ``SqliteTenantRepository`` exposes no status-mutation method and the
+        closeout did not add one -- suspension tooling belongs to the phase that
+        needs it. Writing the column directly is also the honest setup for an
+        authorization test: it produces a row the persistence layer already
+        accepts (``create_organization`` takes any ``OrganizationStatus``, and
+        ``test_tenant_persistence`` round-trips a SUSPENDED one), and it proves
+        the check reads current stored state rather than something handed to it.
+        """
+        self.database.connect().execute(
+            "UPDATE organizations SET status = ? WHERE organization_id = ?",
+            (OrganizationStatus.SUSPENDED.value, organization.organization_id),
         )
 
     def create_queue(self, organization: Organization, name: str = "default") -> ReviewQueue:

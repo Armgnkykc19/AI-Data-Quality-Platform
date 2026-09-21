@@ -387,6 +387,79 @@ def test_a_403_says_nothing_about_the_role_it_wanted(tenancy: Tenancy) -> None:
 
 
 # --------------------------------------------------------------------------
+# Organization status
+# --------------------------------------------------------------------------
+
+
+def test_a_suspended_organization_is_unreachable_to_its_own_members(
+    tenancy: Tenancy,
+) -> None:
+    """``OrganizationStatus`` decides whether a tenant's queues may be worked on.
+
+    The member below keeps a valid session and a valid REVIEWER membership
+    throughout; only the organization's stored status changes. Suspension is
+    not a membership fact, so nothing about the membership can express it --
+    which is exactly why authorization has to read the organization's own row.
+    """
+    tenancy.sign_in(REVIEWER_EMAIL)
+    assert tenancy.get(tenancy.a1()).status_code == 200
+
+    tenancy.auth.suspend(tenancy.organization_a)
+
+    for url in read_paths(tenancy):
+        assert tenancy.get(url).status_code == 404, url
+
+
+def test_a_suspended_organization_cannot_be_resolved_in(tenancy: Tenancy) -> None:
+    """The write path fails closed too, and does so before the domain runs."""
+    tenancy.sign_in(REVIEWER_EMAIL)
+    tenancy.auth.suspend(tenancy.organization_a)
+
+    response = tenancy.resolve(tenancy.a1(f"/{tenancy.shared_case_id}/resolve"))
+
+    assert response.status_code == 404
+    stored = tenancy.auth.repository_for(tenancy.queue_a1).get_case(tenancy.shared_case_id)
+    assert stored.version == 1
+    assert stored.case.resolution is None
+
+
+def test_suspension_is_not_announced(tenancy: Tenancy) -> None:
+    """A 404 that matches an invented tenant's, not a status disclosure.
+
+    Publishing "suspended" would tell anyone who could guess an organization id
+    that the tenant exists and something about its commercial standing. It also
+    has to match the non-member answer, or a suspended tenant becomes
+    detectable by elimination.
+    """
+    tenancy.sign_in(REVIEWER_EMAIL)
+    invented = tenancy.get(tenancy.url(UNKNOWN_ORGANIZATION, UNKNOWN_QUEUE))
+    tenancy.auth.suspend(tenancy.organization_a)
+
+    suspended = tenancy.get(tenancy.a1())
+
+    assert suspended.status_code == invented.status_code == 404
+    assert suspended.json() == invented.json()
+    for token in ("SUSPENDED", "suspend", "status", "ACTIVE"):
+        assert token not in suspended.text
+
+
+def test_suspension_does_not_end_the_session(tenancy: Tenancy) -> None:
+    """Suspension is an authorization fact, not an authentication one.
+
+    The person is still who they say they are, and a second organization they
+    belong to stays reachable -- so this must not be collapsed into a 401 or
+    applied installation-wide.
+    """
+    tenancy.auth.grant(tenancy.reviewer, tenancy.organization_b, MembershipRole.REVIEWER)
+    tenancy.sign_in(REVIEWER_EMAIL)
+    tenancy.auth.suspend(tenancy.organization_a)
+
+    assert tenancy.get(tenancy.a1()).status_code == 404
+    assert tenancy.auth.get_session().status_code == 200
+    assert tenancy.get(tenancy.b1()).status_code == 200
+
+
+# --------------------------------------------------------------------------
 # Membership freshness: the session carries identity and nothing else
 # --------------------------------------------------------------------------
 

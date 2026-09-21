@@ -24,7 +24,7 @@ segments -- which is the caller naming what they want to reach, not the caller
 deciding what they are allowed to reach. Every one of the four facts below is
 read from storage:
 
-1. the organization exists,
+1. the organization exists **and is ACTIVE**,
 2. the queue exists **and belongs to that organization**,
 3. the user holds a membership in that organization,
 4. the membership's role carries the required capability.
@@ -53,7 +53,12 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Protocol
 
-from identity.models import MembershipRole, Organization, OrganizationMembership
+from identity.models import (
+    MembershipRole,
+    Organization,
+    OrganizationMembership,
+    OrganizationStatus,
+)
 from review_api.errors import TenantCapabilityError, TenantScopeNotVisibleError
 from review_application import ReviewCaseRepository, ReviewQueue, ReviewQueueService
 
@@ -198,6 +203,22 @@ class TenantAuthorizationService:
         organization = self._directory.get_organization(organization_id)
         if organization is None:
             raise TenantScopeNotVisibleError("unknown organization")
+        if organization.status is not OrganizationStatus.ACTIVE:
+            # ``OrganizationStatus`` is defined as "whether this organization's
+            # queues may be worked on", so a SUSPENDED tenant is one whose
+            # queues may not be -- by its own model, not by a rule invented
+            # here. Enforcing it is not optional just because no CLI currently
+            # writes that value: ``create_organization`` accepts it, the column
+            # stores it, and an authorization check that is only correct for the
+            # states one command happens to produce is a check that fails open
+            # the moment a second command exists.
+            #
+            # Refused as *not visible* rather than as a distinct status. A
+            # dedicated "suspended" answer would publish a tenant's commercial
+            # state to anyone who could guess its id, and would tell a
+            # non-member that the organization exists at all. Suspension makes
+            # a tenant unreachable; it is not an error message.
+            raise TenantScopeNotVisibleError(f"organization is {organization.status.value}")
 
         queue = self._directory.get_review_queue(review_queue_id)
         if queue is None:

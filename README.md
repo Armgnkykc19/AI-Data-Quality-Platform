@@ -173,7 +173,9 @@ POST .../review-cases/{review_case_id}/resolve
 
 The old unscoped `/api/v1/review-cases` paths are **gone**, not authenticated in place. An authenticated route that still had to choose a queue would choose one the caller never named, which is the failure explicit scope exists to prevent.
 
-Scope is never inferred. Not from the session, not from the cookie, not from the request body, and not from an installation that happens to hold one queue. Four facts are read from storage on every request: the organization exists, the queue exists **and belongs to it**, the caller holds a membership, and the membership's role carries the capability the route needs.
+Scope is never inferred. Not from the session, not from the cookie, not from the request body, and not from an installation that happens to hold one queue. Four facts are read from storage on every request: the organization exists **and is `ACTIVE`**, the queue exists **and belongs to it**, the caller holds a membership, and the membership's role carries the capability the route needs.
+
+A `SUSPENDED` organization is unreachable, including to its own members. `OrganizationStatus` is defined as whether a tenant's queues may be worked on, so suspension is enforced rather than merely recorded — and it is enforced as *not found*, not as a distinct status, because a "suspended" answer would publish a tenant's commercial standing to anyone who could guess its id. The session stays valid throughout: suspension is an authorization fact, so another organization the same person belongs to is unaffected.
 
 Two roles, two capabilities, and no RBAC framework:
 
