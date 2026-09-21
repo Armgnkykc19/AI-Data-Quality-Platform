@@ -1,5 +1,11 @@
 """The four read endpoints, against a repository that cannot write.
 
+Every URL here is tenant-scoped, and every request is authorized by the real
+capability policy over a fake tenant directory -- see ``tenant_support``. So a
+route that lost its scope dependency, or asked the binder for a queue other
+than the one its URL named, fails in this file as well as in the dedicated
+authorization tests.
+
 Every test here runs on ``FakeReviewCaseRepository``, whose authority methods
 raise ``AssertionError``. So "this GET has no side effects" is not a separate
 assertion bolted on at the end -- it is a property of every test in the file. A
@@ -18,6 +24,7 @@ from fastapi.testclient import TestClient
 from human_review.models import HumanReviewDecision, ReviewStatus
 from review_application import PersistedCase, ReviewEvent
 from tests.review_api.conftest import (
+    CASES_URL,
     LATER,
     NOW,
     api_client,
@@ -28,8 +35,6 @@ from tests.review_api.conftest import (
 )
 from tests.review_api.fake_repository import FakeReviewCaseRepository
 from tests.review_persistence.semantic_fixtures import as_provider_failure, make_suggestion
-
-CASES_URL = "/api/v1/review-cases"
 
 SUMMARY_FIELDS = {
     "review_case_id",

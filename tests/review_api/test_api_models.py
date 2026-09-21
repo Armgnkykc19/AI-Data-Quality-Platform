@@ -29,6 +29,11 @@ from review_api.models import (
     ReviewEventRead,
 )
 
+# The scoped prefix every review operation lives under.
+TENANT_CASES = (
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases"
+)
+
 # --------------------------------------------------------------------------
 # HealthResponse
 # --------------------------------------------------------------------------
@@ -85,12 +90,19 @@ def test_the_request_base_forbids_extra_fields() -> None:
     assert ResolveReviewCaseRequest.model_config["extra"] == "forbid"
 
 
-def test_the_resolve_request_accepts_exactly_three_fields() -> None:
+def test_the_resolve_request_accepts_exactly_two_fields() -> None:
+    """Reviewer identity is not among them, and must never be re-added.
+
+    Asserted on ``model_fields`` rather than through a request, so a field
+    restored by a merge fails here immediately rather than at whichever
+    endpoint test happened to send one.
+    """
     assert set(ResolveReviewCaseRequest.model_fields) == {
         "decision",
         "expected_version",
-        "reviewer_id",
     }
+    for forbidden in ("reviewer_id", "user_id", "organization_id", "review_queue_id"):
+        assert forbidden not in ResolveReviewCaseRequest.model_fields
 
 
 def test_the_resolve_response_reuses_the_phase_b_projections() -> None:
@@ -172,25 +184,37 @@ def test_error_codes_are_api_owned_tokens() -> None:
     ]
 
 
-def test_no_later_phase_error_code_exists_yet() -> None:
-    """A code with no route that can produce it is a branch no test can reach.
+def test_no_unreachable_or_leaking_error_code_exists() -> None:
+    """Two different reasons a code must be absent, in one list.
 
-    ``UNAUTHENTICATED`` and ``FORBIDDEN`` left this list in Sprint 13 Phase D,
-    when the authentication endpoints that raise them arrived. The rest are
-    still premature: registration and semantic generation have no HTTP surface,
-    and tenant authorization codes belong to the phase that enforces it.
+    ``QUEUE_ALREADY_REGISTERED``, ``DUPLICATE_CASE_REGISTRATION`` and the
+    semantic codes are premature: registration and generation have no HTTP
+    surface, so nothing could raise them and no test could reach them.
+
+    ``ORGANIZATION_NOT_FOUND``, ``QUEUE_NOT_FOUND``, ``NOT_A_MEMBER`` and
+    ``INSUFFICIENT_ROLE`` are a different matter, and Phase E deliberately did
+    not add them while building the layer that would raise them. Each would
+    publish, in a machine-readable field, exactly the distinction the 404
+    collapse exists to hide: whether an organization exists, whether a queue
+    exists, and whether the caller is a member. Tenant scope failures share
+    ``NOT_FOUND`` and capability failures share ``FORBIDDEN`` for that reason,
+    and that is permanent rather than pending.
     """
     declared = {code.value for code in ErrorCode}
 
-    for premature in (
+    for absent in (
         "QUEUE_ALREADY_REGISTERED",
         "DUPLICATE_CASE_REGISTRATION",
         "SEMANTIC_PROVIDER_UNAVAILABLE",
         "SEMANTIC_BUDGET_EXCEEDED",
         "ORGANIZATION_NOT_FOUND",
+        "QUEUE_NOT_FOUND",
+        "NOT_A_MEMBER",
+        "MEMBERSHIP_REQUIRED",
         "INSUFFICIENT_ROLE",
+        "INSUFFICIENT_CAPABILITY",
     ):
-        assert premature not in declared
+        assert absent not in declared
 
 
 def test_each_exception_is_mapped_once_to_a_declared_code() -> None:
@@ -225,8 +249,8 @@ def test_created_apps_are_isolated_instances() -> None:
     first, second = create_app(), create_app()
 
     assert first is not second
-    first.state.repository = object()
-    assert second.state.repository is None
+    first.state.queue_binder = object()
+    assert second.state.queue_binder is None
 
 
 def test_debug_is_off() -> None:
@@ -235,27 +259,50 @@ def test_debug_is_off() -> None:
 
 
 def test_no_cors_middleware_is_installed() -> None:
-    """No authentication means no origin this API could safely trust."""
+    """CORS permits cross-origin requests; this API has none to permit.
+
+    The browser reaches it same-origin through the Vite proxy, so the only
+    cross-origin requests that exist are forged ones -- which the Origin check
+    refuses. Installing CORS to make something work would hand
+    browser-mediated access to another origin's script.
+    """
     installed = [middleware.cls.__name__ for middleware in create_app().user_middleware]
 
     assert "CORSMiddleware" not in installed
 
 
-def test_injected_repository_and_service_reach_app_state() -> None:
-    """The Phase B/C seam: a fake satisfying the contract wires in like the real one."""
-    repository, service = object(), object()
+def test_injected_tenant_wiring_reaches_app_state() -> None:
+    """The injection seam: a fake satisfying the contract wires in like the real one.
 
-    app = create_app(repository=repository, service=service)  # type: ignore[arg-type]
+    Note what cannot be injected any more. There is no ``repository=`` and no
+    ``service=``: both were bound to one queue, so accepting either would give
+    an application a queue before any request had named one.
+    """
+    binder, authorization = object(), object()
 
-    assert app.state.repository is repository
-    assert app.state.service is service
+    app = create_app(queue_binder=binder, tenant_authorization=authorization)  # type: ignore[arg-type]
+
+    assert app.state.queue_binder is binder
+    assert app.state.tenant_authorization is authorization
+
+
+def test_create_app_rejects_a_preboud_queue() -> None:
+    """The removed parameters are gone, not deprecated.
+
+    A ``create_app(repository=...)`` left accepting its argument would keep the
+    single-queue wiring alive in whatever still called it.
+    """
+    with pytest.raises(TypeError):
+        create_app(repository=object())  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        create_app(service=object())  # type: ignore[call-arg]
 
 
 def test_an_unwired_app_reports_no_storage() -> None:
     app = create_app()
 
-    assert app.state.repository is None
-    assert app.state.service is None
+    assert app.state.queue_binder is None
+    assert app.state.tenant_authorization is None
 
 
 def published_paths() -> dict[str, dict]:
@@ -292,22 +339,22 @@ def business_routes() -> list[tuple[str, set[str]]]:
 def test_the_published_surface_is_pinned_whole() -> None:
     """Pinned whole, so a new endpoint cannot ship without editing this list.
 
-    Sprint 13 Phase D added four authentication operations and changed nothing
-    about the review ones. The review routes are deliberately still
-    unauthenticated: adding identity to them without tenant authorization would
-    produce a surface where a signed-in user can read every tenant's queue,
-    which is worse than an honestly unauthenticated one.
+    Sprint 13 Phase E moved every review operation under an explicit
+    organization and review queue, and removed the unscoped Sprint 11 paths
+    rather than authenticating them where they stood. An authenticated route
+    that still had to pick a queue for itself would pick one the caller never
+    named, which is the failure the scope segments exist to make impossible.
     """
     assert business_routes() == [
         ("/api/v1/auth/login", {"POST"}),
         ("/api/v1/auth/logout", {"POST"}),
         ("/api/v1/auth/session", {"GET"}),
         ("/api/v1/auth/session/continue", {"POST"}),
-        ("/api/v1/review-cases", {"GET"}),
-        ("/api/v1/review-cases/{review_case_id}", {"GET"}),
-        ("/api/v1/review-cases/{review_case_id}/events", {"GET"}),
-        ("/api/v1/review-cases/{review_case_id}/resolve", {"POST"}),
-        ("/api/v1/review-cases/{review_case_id}/semantic-suggestions", {"GET"}),
+        (f"{TENANT_CASES}", {"GET"}),
+        (f"{TENANT_CASES}/{{review_case_id}}", {"GET"}),
+        (f"{TENANT_CASES}/{{review_case_id}}/events", {"GET"}),
+        (f"{TENANT_CASES}/{{review_case_id}}/resolve", {"POST"}),
+        (f"{TENANT_CASES}/{{review_case_id}}/semantic-suggestions", {"GET"}),
     ]
 
 
@@ -330,7 +377,7 @@ def test_resolution_is_the_only_review_write_endpoint() -> None:
         if methods != {"GET"} and "/review-cases" in path
     ]
 
-    assert writes == [("/api/v1/review-cases/{review_case_id}/resolve", {"POST"})]
+    assert writes == [(f"{TENANT_CASES}/{{review_case_id}}/resolve", {"POST"})]
 
 
 def test_no_registration_endpoint_is_published() -> None:
@@ -355,5 +402,5 @@ def test_no_live_semantic_generation_endpoint_exists() -> None:
     """
     paths = {path for path, _ in business_routes()}
 
-    assert "/api/v1/review-cases/{review_case_id}/semantic-review" not in paths
+    assert f"{TENANT_CASES}/{{review_case_id}}/semantic-review" not in paths
     assert not [path for path in paths if path.endswith("/semantic-review")]

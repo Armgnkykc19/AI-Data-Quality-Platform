@@ -12,7 +12,7 @@ from human_review.cases import generate_review_cases
 from human_review.models import HumanReviewDecision, ReviewCase, ReviewWorkflowState
 from human_review.reporting import resolution_snapshot
 from human_review.workflow import ReviewWorkflow
-from identity.models import Organization
+from identity.models import MembershipRole, Organization, OrganizationMembership, User
 from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
@@ -32,6 +32,9 @@ from tests.human_review.conftest import (
 ORGANIZATION_ID = "ORG-fixture-primary"
 ORGANIZATION_SLUG = "fixture-primary"
 REVIEW_QUEUE_ID = "RQ-fixture-primary"
+
+FIXTURE_USER_ID = "USR-fixture-reviewer"
+FIXTURE_USER_EMAIL = "fixture-reviewer@example.test"
 
 SECOND_ORGANIZATION_ID = "ORG-fixture-second"
 SECOND_ORGANIZATION_SLUG = "fixture-second"
@@ -111,6 +114,68 @@ def provision_queue(
             created_at_utc=PROVISIONED_AT,
             review_queue_id=review_queue_id,
         )
+    )
+
+
+def provision_membership(
+    database: ReviewDatabase,
+    *,
+    user_id: str = FIXTURE_USER_ID,
+    email: str = FIXTURE_USER_EMAIL,
+    organization_id: str = ORGANIZATION_ID,
+    role: MembershipRole = MembershipRole.REVIEWER,
+) -> OrganizationMembership:
+    """Create a user if needed and join them to an organization in one role.
+
+    Goes through ``SqliteTenantRepository`` rather than inserting rows, so the
+    membership a test authorizes against is one the application could actually
+    have produced. No credential is written: these fixtures authenticate by
+    overriding the principal dependency, and a password would be a secret in a
+    test that never verifies one.
+    """
+    tenants = SqliteTenantRepository(database)
+    if tenants.get_user(user_id) is None:
+        tenants.create_user(
+            User.create(
+                email=email,
+                display_name=user_id,
+                created_at_utc=PROVISIONED_AT,
+                user_id=user_id,
+            )
+        )
+    return tenants.create_membership(
+        OrganizationMembership.create(
+            organization_id=organization_id,
+            user_id=user_id,
+            role=role,
+            created_at_utc=PROVISIONED_AT,
+        )
+    )
+
+
+def set_membership_role(
+    database: ReviewDatabase,
+    *,
+    user_id: str,
+    organization_id: str,
+    role: MembershipRole,
+) -> None:
+    """Change a stored role directly, the way ``disable`` changes a user status.
+
+    ``SqliteTenantRepository`` deliberately exposes no role-management surface:
+    a membership's role is set when the membership is created, by an operator,
+    and Phase E did not add a mutation primitive just so a test could call one.
+    Adding one to production code to make a test convenient is how an
+    unnecessary write path gets shipped.
+
+    So the authoritative row is changed here, which is also the more honest
+    setup: the freshness tests are about authorization reading *current* state,
+    and writing that state out of band proves the read is genuinely fresh rather
+    than a value some service handed back.
+    """
+    database.connect().execute(
+        "UPDATE organization_memberships SET role = ? WHERE organization_id = ? AND user_id = ?",
+        (role.value, organization_id, user_id),
     )
 
 

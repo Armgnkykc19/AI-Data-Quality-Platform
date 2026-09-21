@@ -1,8 +1,9 @@
 """The resolution endpoint's transport contract, against a capturing service.
 
-What this file establishes: the route forwards exactly three fields and adds
-nothing; the request model rejects everything else; each domain refusal reaches
-the client as its own status and code with no exception text attached.
+What this file establishes: the route forwards the client's two fields plus the
+server-derived reviewer identity and adds nothing; the request model rejects
+everything else, ``reviewer_id`` included; each domain refusal reaches the
+client as its own status and code with no exception text attached.
 
 What it deliberately does not establish: whether Sprint 08 would actually refuse
 a given decision. That is proved against real SQLite in
@@ -32,13 +33,16 @@ from review_application import (
     ReviewPersistenceError,
 )
 from review_application.errors import ReviewWorkflowContextMissingError
-from tests.review_api.conftest import resolution_result, service_client
+from tests.review_api.conftest import CASES_URL, resolution_result, service_client
 from tests.review_api.fake_service import FakeReviewQueueService
+from tests.review_api.tenant_support import USER_ID
 
 CASE_ID = "RC-cc90777b8be6026f"
-RESOLVE_URL = f"/api/v1/review-cases/{CASE_ID}/resolve"
+RESOLVE_URL = f"{CASES_URL}/{CASE_ID}/resolve"
 
-VALID_BODY = {"decision": "MATCH", "expected_version": 1, "reviewer_id": "rev-1"}
+# Two fields. There is no reviewer_id to send: the server derives it from the
+# authenticated principal, and a body carrying one is rejected outright.
+VALID_BODY = {"decision": "MATCH", "expected_version": 1}
 
 # Text of the kind the real exceptions carry. Every mapping test raises an
 # exception containing all of it, so a handler that forwarded str(exc) would
@@ -80,11 +84,14 @@ def raising_client(error: Exception) -> TestClient:
 # --------------------------------------------------------------------------
 
 
-def test_the_route_forwards_exactly_three_fields() -> None:
+def test_the_route_forwards_two_client_fields_and_one_server_fact() -> None:
     """The central claim of this phase, asserted against a recorded call.
 
-    Anything else appearing here would mean the HTTP layer had started
-    contributing to an authorization decision it has no business influencing.
+    Three arguments reach the authority. Two of them -- the decision and the
+    version -- are the client's. The third, ``reviewer_id``, is the
+    authenticated principal's user id, supplied by the server. Anything else
+    appearing here would mean the HTTP layer had started contributing to an
+    authorization decision it has no business influencing.
     """
     service = ok_service()
 
@@ -95,7 +102,7 @@ def test_the_route_forwards_exactly_three_fields() -> None:
     call = service.calls[0]
     assert call.review_case_id == CASE_ID
     assert call.decision is HumanReviewDecision.MATCH
-    assert call.reviewer_id == "rev-1"
+    assert call.reviewer_id == USER_ID
     assert call.expected_version == 1
     assert call.extra_kwargs == {}
 
@@ -110,29 +117,41 @@ def test_the_decision_arrives_as_the_domain_enum() -> None:
     assert isinstance(service.calls[0].decision, HumanReviewDecision)
 
 
-def test_a_missing_reviewer_id_is_forwarded_as_none() -> None:
-    """The domain allows an anonymous decision; the API does not invent one."""
+def test_the_reviewer_id_is_always_the_authenticated_user() -> None:
+    """The domain never receives an anonymous decision from this route.
+
+    Sprint 11 forwarded ``None`` when a client omitted the field, because there
+    was nothing better to send. There is now: an authenticated request always
+    carries a verified identity, so an HTTP resolution is always attributable.
+    """
     service = ok_service()
 
     service_client(service).post(RESOLVE_URL, json={"decision": "MATCH", "expected_version": 1})
 
-    assert service.calls[0].reviewer_id is None
+    assert service.calls[0].reviewer_id == USER_ID
+    assert service.calls[0].reviewer_id is not None
 
 
-def test_reviewer_id_is_forwarded_verbatim() -> None:
-    """No strip, no case fold, no emptiness rule.
+@pytest.mark.parametrize("spoofed", ["someone-else", "", "  Ada  ", None, USER_ID])
+def test_a_client_supplied_reviewer_id_never_reaches_the_authority(spoofed: object) -> None:
+    """Rejected, not ignored -- including when it names the caller themselves.
 
-    It lands in an append-only audit row, so any normalisation here would
-    silently change recorded identity. Sprint 13 owns reviewer identity.
+    An ignored field looks accepted, and "accepted" is the wrong thing to tell a
+    client that just tried to sign a decision as another person. Even the
+    honest-looking case is refused: accepting the field when it happens to
+    match would make the server's answer depend on a value the client chose,
+    and the whole point is that it does not.
     """
     service = ok_service()
 
-    service_client(service).post(
+    response = service_client(service).post(
         RESOLVE_URL,
-        json={"decision": "MATCH", "expected_version": 1, "reviewer_id": "  Ada  "},
+        json={"decision": "MATCH", "expected_version": 1, "reviewer_id": spoofed},
     )
 
-    assert service.calls[0].reviewer_id == "  Ada  "
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "INVALID_REQUEST"
+    assert service.calls == []
 
 
 def test_the_route_does_not_call_the_service_when_validation_fails() -> None:

@@ -92,11 +92,11 @@ ruff check .
 
 ## Project Status
 
-Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete, Sprint 09 adds optional advisory semantic review, Sprint 10 persists the review queue, Sprint 11 serves it over a localhost REST API, Sprint 12 adds the local Reviewer UI, and Sprint 13 is adding multi-tenancy, starting with the persistence foundation. The LLM is never an authority, and human review stays backend-authoritative.
+Early development — Sprint 08 (Human Review & Ambiguity Resolution) is complete, Sprint 09 adds optional advisory semantic review, Sprint 10 persists the review queue, Sprint 11 serves it over a localhost REST API, Sprint 12 adds the local Reviewer UI, and Sprint 13 is adding multi-tenancy: the persistence foundation, authentication, and now tenant-scoped authorization on every review endpoint. The LLM is never an authority, and human review stays backend-authoritative.
 
 ## Sprint 13 (in progress)
 
-Sprint 13 adds authentication, organizations and tenant isolation. **Identity works; authorization does not yet.** A person can sign in over HTTP and hold a real session, but no review endpoint checks who they are and nothing in the browser has changed. What exists is the tenant ownership graph, the authentication core beneath it, and the HTTP surface on top of it — each built and proven before the next was written.
+Sprint 13 adds authentication, organizations and tenant isolation. **Identity and authorization both work; the browser does not yet.** Every review endpoint now requires a session and names its organization and review queue explicitly in the URL, and access is decided from current organization membership. The Sprint 12 UI still speaks the old unscoped API and is therefore temporarily incompatible — the security boundary was closed first on purpose, and frontend integration follows.
 
 What does exist is the ownership graph everything above it will hang from:
 
@@ -153,13 +153,44 @@ Password:
 Confirm password:
 ```
 
-There is no `--password` and there will not be: an argument is written to shell history and visible in the process list. The account is created together with its password in one transaction, so a failure cannot leave a user who exists but cannot sign in. It gets no organization, no membership and no role — granting access is a separate decision.
+There is no `--password` and there will not be: an argument is written to shell history and visible in the process list. The account is created together with its password in one transaction, so a failure cannot leave a user who exists but cannot sign in. It gets no organization, no membership and no role — granting access is a separate decision, made with `add-membership` below. A user with no membership signs in successfully and finds nothing to read: every review URL answers the same `404` a stranger would get.
 
 Cookie and origin policy lives in `configs/auth_http.yaml`. `session_cookie_secure` defaults to **true**; the committed file sets it to false for the documented local HTTP runtime, and the loader refuses that setting unless every allowed origin is loopback.
 
-Still not implemented, and deliberately: authentication on the review routes, tenant-scoped URLs, role enforcement, frontend login, "remember me", public registration, password reset, email verification, and a double-submit CSRF token.
+Still not implemented, and deliberately: frontend login, "remember me", public registration, password reset, email verification, and a double-submit CSRF token.
 
-**The review routes are still unauthenticated.** That is a phase boundary rather than an oversight: adding identity to them before tenant authorization exists would produce a surface where any signed-in user reads every tenant's queue, which is worse than an honestly unauthenticated one. They remain a localhost tool until the phase that scopes them.
+### Tenant authorization
+
+Every review operation names its organization and its review queue in the path, and requires a session:
+
+```
+GET  /api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases
+GET  .../review-cases/{review_case_id}
+GET  .../review-cases/{review_case_id}/events
+GET  .../review-cases/{review_case_id}/semantic-suggestions
+POST .../review-cases/{review_case_id}/resolve
+```
+
+The old unscoped `/api/v1/review-cases` paths are **gone**, not authenticated in place. An authenticated route that still had to choose a queue would choose one the caller never named, which is the failure explicit scope exists to prevent.
+
+Scope is never inferred. Not from the session, not from the cookie, not from the request body, and not from an installation that happens to hold one queue. Four facts are read from storage on every request: the organization exists, the queue exists **and belongs to it**, the caller holds a membership, and the membership's role carries the capability the route needs.
+
+Two roles, two capabilities, and no RBAC framework:
+
+| | `READ_REVIEW_QUEUE` | `RESOLVE_REVIEW_CASE` |
+|---|---|---|
+| `VIEWER` | yes | no |
+| `REVIEWER` | yes | yes |
+
+**404 hides existence; 403 admits only what the caller already knows.** An unknown organization, an unknown queue, a queue owned by someone else, and a missing membership are one `404 NOT_FOUND` with one body — telling them apart would let anyone with an account enumerate tenants. `403 FORBIDDEN` is reachable only once membership is proven, so a `VIEWER` posting a resolution gets 403 while a non-member gets 404. A mismatched organization/queue pairing is refused and never silently corrected to the queue's real owner.
+
+**Membership is read fresh, never cached in the session.** A session carries identity and nothing else — no organization, no queue, no role, no capability, in the cookie or in the row. Granting, changing or removing a membership therefore takes effect on the next request, in the same session, rather than in up to eight hours.
+
+**Reviewer identity is server-derived.** The resolution request carries `decision` and `expected_version`, and nothing else; the server supplies the authenticated user's id to the domain, so the durable audit event names the session that was actually used. A body carrying `reviewer_id` is rejected with `422` rather than ignored — an ignored field would look accepted.
+
+**Tenant authorization is not human-review authorization.** It answers whether a subject may *attempt* a resolution. Whether a particular `MATCH` is safe remains Sprint 08's answer, reached from review evidence, and a `REVIEWER` role does not influence it: a refused merge is still `422 MATCH_NOT_AUTHORIZED`, never a 403. Optimistic concurrency is untouched — a stale `expected_version` is still `409`.
+
+`POST .../resolve` is state-changing and cookie-authenticated, so it uses the same strict trusted-`Origin` check as the authentication routes; a missing or forged `Origin` is refused before any session work happens. `GET` routes have no `Origin` requirement.
 
 ### Database schema 2.0.0
 
@@ -173,9 +204,15 @@ Organizations and review queues are created by an operator, never by an HTTP req
 python scripts/manage_human_review.py create-organization --slug acme --name "Acme Inc."
 python scripts/manage_human_review.py list-organizations
 python scripts/manage_human_review.py create-review-queue --organization acme --name production-review
+python scripts/manage_human_review.py add-membership \
+    --user reviewer@example.com --organization acme --role REVIEWER
 ```
 
-Registering a workflow then names both of them explicitly, and creates neither — see Sprint 11 below.
+`add-membership` is what makes a tenant's queue reachable by a person, so every part of it is explicit: the user, the organization and the role are all required, there is no default role, and neither the user nor the organization is created for you. A user already holding a membership in that organization is refused — a user has exactly one role per organization — leaving the stored role exactly as it was.
+
+**There is no HTTP equivalent, and there must not be.** A membership endpoint would let whoever holds a session widen their own reach; granting access to customer review evidence stays an operator action at a terminal.
+
+Registering a workflow then names the organization and the queue explicitly, and creates neither — see Sprint 11 below.
 
 ## Sprint 12
 
@@ -183,7 +220,7 @@ Sprint 12 adds the Reviewer UI: a local browser interface over the Sprint 11 rev
 
 It is a client and nothing more. The queue, the evidence, the advisory observations, the history and every decision rule stay behind the API — the browser renders what is published, submits one human decision, and re-reads the result. Human review remains backend-authoritative: Sprint 08 decides whether a `MATCH` is permitted, and the UI has no field, request or code path through which it could evaluate, weaken, or bypass that. Semantic suggestions are displayed as advisory observations and can never become a decision.
 
-**Local only, and not internet-ready.** There is no authentication and no verified reviewer identity. The reviewer label is an unverified audit string, not an account, and the interface does not store it. Sprint 13 has added organizations and tenant ownership in the database, but nothing on the HTTP surface or in the browser authenticates anybody yet; production serving and browser end-to-end testing arrive in Sprint 14.
+**Temporarily incompatible with the API, and not internet-ready.** The UI was written against the Sprint 11 unscoped, unauthenticated review routes, which Sprint 13 replaced with authenticated tenant-scoped ones. Nothing in `frontend/src/` was changed in that phase apart from the generated `openapi.snapshot.json`: closing the server-side boundary and migrating the browser are separate pieces of work, and doing them together would have meant judging a security change by whether a screen still rendered. There is no login screen, no tenant or queue selector, and no session handling in the browser yet; that migration, production serving and browser end-to-end testing arrive next.
 
 ### Prerequisites
 
@@ -218,7 +255,7 @@ npm run dev
 
 Serves `http://127.0.0.1:5173`, loopback only.
 
-The browser requests `/health` and `/api/v1/...` as **relative, same-origin paths**; the Vite dev server proxies them to the API on port 8000. That is why no CORS configuration exists or is needed: the API never sees a second origin, and it installs no CORS middleware precisely because an unauthenticated API publishing customer-derived evidence has no origin it could safely trust. There is no `VITE_API_URL` and no absolute backend URL in browser source — adding one would make every request cross-origin and reintroduce the problem the proxy avoids. `npm run preview` serves the production build under the same proxy and the same loopback constraint.
+The browser requests `/health` and `/api/v1/...` as **relative, same-origin paths**; the Vite dev server proxies them to the API on port 8000. That is why no CORS configuration exists or is needed: the API never sees a second origin, and it installs no CORS middleware precisely because CORS exists to *permit* cross-origin requests — there are none to permit here, only forged ones to refuse, which the `Origin` check does. There is no `VITE_API_URL` and no absolute backend URL in browser source — adding one would make every request cross-origin and reintroduce the problem the proxy avoids. `npm run preview` serves the production build under the same proxy and the same loopback constraint.
 
 ### 4. Verify
 
@@ -254,7 +291,7 @@ python -c "import json; from review_api import create_app; print(json.dumps(crea
 
 Sprint 11 puts a read/resolve REST API in front of the Sprint 10 persistent review queue, and gives the queue one official way to be populated and one official way to be served.
 
-**Not internet-ready.** There is no authentication, no verified reviewer identity, no organizations or tenant isolation, no rate limiting, no TLS termination, and no CORS policy. `reviewer_id` is whatever the client sends, responses carry customer-derived review evidence, and `POST .../resolve` is an authoritative human-review write. The API is bound to localhost and is a local reviewer tool until Sprint 13 adds an identity and authorization boundary. "Production path" here means the real durable application path rather than fixtures or golden evaluation — it does not mean deployable.
+**Still not internet-ready, for different reasons than before.** Sprint 13 added authentication, tenant-scoped URLs, membership-based authorization and server-derived reviewer identity — so the routes described below are the Sprint 13 ones, and the unscoped paths Sprint 11 published no longer exist. What is still missing is rate limiting, TLS termination and a deployment configuration; the API is bound to localhost and is a local reviewer tool. "Production path" here means the real durable application path rather than fixtures or golden evaluation — it does not mean deployable.
 
 ### 1. Register a review queue
 
@@ -281,21 +318,21 @@ Needs `fastapi`, `pydantic` and `uvicorn`, declared together as the `api` extra 
 
 Defaults to `http://127.0.0.1:8000` with one worker and no reloader; `--host` accepts loopback addresses only (`127.0.0.1`, `localhost`, `::1`) and `--port` sets the port. Register a queue first — the runner refuses to start against a database that does not exist rather than creating an empty one that would look like a fully reviewed queue.
 
-Because these routes still have no authenticated caller, the server serves exactly one review queue and resolves it once at startup: it reads the queues an operator already created, and refuses to start when there are none or more than one. It never creates an organization or a queue of its own, and no part of a request can influence which queue is served. That binding is explicitly temporary and is removed when authenticated, tenant-scoped routes land.
+The server binds **no queue at startup**. It reads no queue count, serves as many organizations and queues as an operator created, and starts happily against a database holding none — every request names the queue it wants, so there is nothing to disambiguate at boot. The transitional sole-queue resolution that stood here while the routes had no authenticated caller is gone.
 
-A queue that exists but has never had a workflow registered still starts and serves an empty page; it refuses every decision with `503 REVIEW_QUEUE_NOT_READY` rather than authorizing against a context that was never stored.
+A queue that exists but has never had a workflow registered still serves an empty page; it refuses every decision with `503 REVIEW_QUEUE_NOT_READY` rather than authorizing against a context that was never stored.
 
-Liveness is `GET /health`, which returns `{"status": "ok"}` and reports nothing about storage. The reviewer endpoints are under `/api/v1/review-cases`, and the generated OpenAPI schema is served at `/openapi.json`:
+Liveness is `GET /health`, which returns `{"status": "ok"}`, reports nothing about storage, and needs no credential. The reviewer endpoints are tenant-scoped (see "Tenant authorization" under Sprint 13 above), and the generated OpenAPI schema is served at `/openapi.json`:
 
 ```
-GET  /api/v1/review-cases
-GET  /api/v1/review-cases/{review_case_id}
-GET  /api/v1/review-cases/{review_case_id}/events
-GET  /api/v1/review-cases/{review_case_id}/semantic-suggestions
-POST /api/v1/review-cases/{review_case_id}/resolve
+GET  /api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases
+GET  .../review-cases/{review_case_id}
+GET  .../review-cases/{review_case_id}/events
+GET  .../review-cases/{review_case_id}/semantic-suggestions
+POST .../review-cases/{review_case_id}/resolve
 ```
 
-`POST .../resolve` is a thin adapter over `ReviewQueueService.resolve_case`: it accepts `MATCH` / `NO_MATCH` / `DEFER` with an `expected_version`, and Sprint 08 remains the only authority on whether the decision is allowed. Semantic suggestions are read-only — Sprint 09 generation is not reachable over HTTP.
+`POST .../resolve` is a thin adapter over `ReviewQueueService.resolve_case`: it accepts `MATCH` / `NO_MATCH` / `DEFER` with an `expected_version`, supplies the authenticated user as the reviewer, and Sprint 08 remains the only authority on whether the decision is allowed. Semantic suggestions are read-only — Sprint 09 generation is not reachable over HTTP.
 
 ## Sprint 08
 

@@ -161,19 +161,6 @@
             "minimum": 1.0,
             "title": "Expected Version",
             "type": "integer"
-          },
-          "reviewer_id": {
-            "anyOf": [
-              {
-                "maxLength": 256,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Unverified audit label. Not an authenticated identity.",
-            "title": "Reviewer Id"
           }
         },
         "required": [
@@ -878,11 +865,37 @@
         ]
       }
     },
-    "/api/v1/review-cases": {
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases": {
       "get": {
-        "description": "One page of the queue, optionally filtered by status.\n\n``status`` is the ``ReviewStatus`` enum, so FastAPI matches it exactly:\n``PENDING`` is accepted and ``pending`` is a 422. Coercing case would mean\nthis layer deciding what a status token means, and there is already exactly\none answer to that in ``human_review.models``.\n\nFiltering is the repository's job and slicing is this route's. ``total``\ncounts the filtered set before the slice, so an offset past the end returns\nan empty page that still says how many cases matched.",
-        "operationId": "list_review_cases_api_v1_review_cases_get",
+        "description": "One page of this queue, optionally filtered by status.\n\n``status`` is the ``ReviewStatus`` enum, so FastAPI matches it exactly:\n``PENDING`` is accepted and ``pending`` is a 422. Coercing case would mean\nthis layer deciding what a status token means, and there is already exactly\none answer to that in ``human_review.models``.\n\nFiltering is the repository's job and slicing is this route's. ``total``\ncounts the filtered set before the slice, so an offset past the end returns\nan empty page that still says how many cases matched -- and every number\nhere counts only this queue, because the repository cannot see another.",
+        "operationId": "list_review_cases_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases_get",
         "parameters": [
+          {
+            "description": "Opaque organization identifier.",
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque organization identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque review queue identifier, owned by the organization above.",
+            "in": "path",
+            "name": "review_queue_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque review queue identifier, owned by the organization above.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Review Queue Id",
+              "type": "string"
+            }
+          },
           {
             "description": "Exact review status.",
             "in": "query",
@@ -947,27 +960,53 @@
             "description": "Validation Error"
           }
         },
-        "summary": "List review cases",
+        "summary": "List review cases in one queue",
         "tags": [
           "review-cases"
         ]
       }
     },
-    "/api/v1/review-cases/{review_case_id}": {
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases/{review_case_id}": {
       "get": {
-        "description": "Full detail for one case, including the version a resolution must echo.\n\n``get_case`` raises ``ReviewCaseNotFoundError`` for an unknown id, which the\nregistered handler turns into a 404 with a static message.",
-        "operationId": "get_review_case_api_v1_review_cases__review_case_id__get",
+        "description": "Full detail for one case in this queue, including the version to echo.\n\n``get_case`` raises ``ReviewCaseNotFoundError`` for an id this queue does\nnot hold, which the registered handler turns into a 404 with a static\nmessage. The same id existing in another tenant's queue changes nothing\nhere: the repository's every statement carries its queue predicate, so a\ncase that is not in *this* queue is simply absent.",
+        "operationId": "get_review_case_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases__review_case_id__get",
         "parameters": [
           {
-            "description": "Stable Sprint 08 review case identifier.",
+            "description": "Stable Sprint 08 review case identifier, unique within this queue.",
             "in": "path",
             "name": "review_case_id",
             "required": true,
             "schema": {
-              "description": "Stable Sprint 08 review case identifier.",
+              "description": "Stable Sprint 08 review case identifier, unique within this queue.",
               "maxLength": 128,
               "minLength": 1,
               "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque organization identifier.",
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque organization identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque review queue identifier, owned by the organization above.",
+            "in": "path",
+            "name": "review_queue_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque review queue identifier, owned by the organization above.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Review Queue Id",
               "type": "string"
             }
           }
@@ -1000,21 +1039,47 @@
         ]
       }
     },
-    "/api/v1/review-cases/{review_case_id}/events": {
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases/{review_case_id}/events": {
       "get": {
         "description": "The append-only history, oldest first, in the repository's own order.\n\n``get_case`` runs first only to produce the 404: ``list_events`` answers an\nunknown case and an eventless case identically.",
-        "operationId": "list_case_events_api_v1_review_cases__review_case_id__events_get",
+        "operationId": "list_case_events_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases__review_case_id__events_get",
         "parameters": [
           {
-            "description": "Stable Sprint 08 review case identifier.",
+            "description": "Stable Sprint 08 review case identifier, unique within this queue.",
             "in": "path",
             "name": "review_case_id",
             "required": true,
             "schema": {
-              "description": "Stable Sprint 08 review case identifier.",
+              "description": "Stable Sprint 08 review case identifier, unique within this queue.",
               "maxLength": 128,
               "minLength": 1,
               "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque organization identifier.",
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque organization identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque review queue identifier, owned by the organization above.",
+            "in": "path",
+            "name": "review_queue_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque review queue identifier, owned by the organization above.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Review Queue Id",
               "type": "string"
             }
           }
@@ -1027,7 +1092,7 @@
                   "items": {
                     "$ref": "#/components/schemas/ReviewEventRead"
                   },
-                  "title": "Response List Case Events Api V1 Review Cases  Review Case Id  Events Get",
+                  "title": "Response List Case Events Api V1 Organizations  Organization Id  Review Queues  Review Queue Id  Review Cases  Review Case Id  Events Get",
                   "type": "array"
                 }
               }
@@ -1051,21 +1116,47 @@
         ]
       }
     },
-    "/api/v1/review-cases/{review_case_id}/resolve": {
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases/{review_case_id}/resolve": {
       "post": {
-        "description": "Apply one human decision, through the Sprint 08 authority and nothing else.\n\nThis route decides nothing. It validates three transport fields, hands them\nto ``ReviewQueueService.resolve_case``, and projects what came back. Every\ninput the authority actually reads -- the AUTO_MATCH graph, the entity\nrecords, the entity-resolution config and its thresholds, the queue's\ncurrent state -- is loaded from storage by the service. None of it can be\nsupplied, influenced, or narrowed from here, and the request model has no\nfield through which a client could try.\n\nThat matters because Sprint 08 authorization is not a property of the\nreviewed pair. It projects a connected component across every AUTO_MATCH\nedge and every recorded human decision, so a MATCH that is safe in isolation\ncan be unsafe in context. A route that fetched one case and reasoned about\nit would silently weaken the check; this one cannot, because it never sees\nthe material.\n\nNo write happens before the domain approves. The service calls\n``ReviewWorkflow.resolve_case`` first and opens the storage transaction only\nwith what the workflow returned, so a refusal leaves no version bump, no\ntimestamp change and no history row. The refusals arrive here as Sprint 08\nand Sprint 10 exceptions, each mapped to its own status and static message\nin ``review_api.errors``.\n\n``200``, not ``201``: the case already existed and was transitioned. Nothing\nwas created at a new location.\n\n``expected_version`` is mandatory and is never defaulted to the stored\nvalue. Optimistic concurrency is the contract -- a reviewer decides against\nthe version they were shown, and one who lost the race is told so rather\nthan having their decision applied to a queue state they never saw.",
-        "operationId": "resolve_review_case_api_v1_review_cases__review_case_id__resolve_post",
+        "description": "Apply one human decision, through the Sprint 08 authority and nothing else.\n\nThis route decides nothing. It validates two transport fields, adds the\nreviewer identity the server already established, hands all three to\n``ReviewQueueService.resolve_case``, and projects what came back.\n\n**``reviewer_id`` comes from ``scope.user_id``.** That is the authenticated\nprincipal's opaque user id -- the durable audit identity ``identity`` mints\nonce per person and never changes -- and there is no request field that\ncould contribute to it. A body carrying ``reviewer_id`` is a 422 from\n``extra=\"forbid\"``, so spoofing another reviewer fails at validation rather\nthan being silently discarded.\n\n**Two authorizations, and they answer different questions.** Reaching this\nline means tenant authorization confirmed the caller may *attempt* a\nresolution in this queue. Whether *this* MATCH is safe is Sprint 08's\nanswer, reached from review evidence, and a REVIEWER role does not\ninfluence it: the deterministic boundary check still refuses a merge that\nwould unite conflicting identities, and that refusal is still\n``MATCH_NOT_AUTHORIZED`` rather than a 403. Collapsing the two would let a\nrole decide a question about records.\n\nEvery input the authority actually reads -- the AUTO_MATCH graph, the\nentity records, the entity-resolution config and its thresholds, the\nqueue's current state -- is loaded from storage by the service, scoped to\nthis queue. None of it can be supplied, influenced, or narrowed from here.\n\nThat matters because Sprint 08 authorization is not a property of the\nreviewed pair. It projects a connected component across every AUTO_MATCH\nedge and every recorded human decision *in this queue*, so a MATCH that is\nsafe in isolation can be unsafe in context, and a NO_MATCH recorded in\nanother tenant's queue constrains nothing here.\n\nNo write happens before the domain approves. The service calls\n``ReviewWorkflow.resolve_case`` first and opens the storage transaction only\nwith what the workflow returned, so a refusal leaves no version bump, no\ntimestamp change and no history row.\n\n``200``, not ``201``: the case already existed and was transitioned.\n\n``expected_version`` is mandatory and is never defaulted to the stored\nvalue. Optimistic concurrency is the contract -- a reviewer decides against\nthe version they were shown, and one who lost the race is told so rather\nthan having their decision applied to a queue state they never saw.",
+        "operationId": "resolve_review_case_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases__review_case_id__resolve_post",
         "parameters": [
           {
-            "description": "Stable Sprint 08 review case identifier.",
+            "description": "Stable Sprint 08 review case identifier, unique within this queue.",
             "in": "path",
             "name": "review_case_id",
             "required": true,
             "schema": {
-              "description": "Stable Sprint 08 review case identifier.",
+              "description": "Stable Sprint 08 review case identifier, unique within this queue.",
               "maxLength": 128,
               "minLength": 1,
               "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque organization identifier.",
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque organization identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque review queue identifier, owned by the organization above.",
+            "in": "path",
+            "name": "review_queue_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque review queue identifier, owned by the organization above.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Review Queue Id",
               "type": "string"
             }
           }
@@ -1108,21 +1199,47 @@
         ]
       }
     },
-    "/api/v1/review-cases/{review_case_id}/semantic-suggestions": {
+    "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases/{review_case_id}/semantic-suggestions": {
       "get": {
-        "description": "Stored Sprint 09 observations for one case. Reading only; never generating.\n\nNo provider is contacted and no suggestion is created. Sprint 11 does not\nexpose live semantic generation over HTTP at all: it is budget-controlled,\ndisabled by default, and would put a network call and a spend decision in an\nunauthenticated request path.\n\nObservation order is preserved and means nothing beyond order. None of these\nis operative -- ``ReviewCase.status`` remains the only statement about what\nwas decided.",
-        "operationId": "list_case_semantic_suggestions_api_v1_review_cases__review_case_id__semantic_suggestions_get",
+        "description": "Stored Sprint 09 observations for one case. Reading only; never generating.\n\nNo provider is contacted and no suggestion is created. Sprint 13 does not\nexpose live semantic generation over HTTP at all: it is budget-controlled,\ndisabled by default, and would put a network call and a spend decision in a\nrequest path that a VIEWER can reach.\n\nObservation order is preserved and means nothing beyond order. None of these\nis operative -- ``ReviewCase.status`` remains the only statement about what\nwas decided.",
+        "operationId": "list_case_semantic_suggestions_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases__review_case_id__semantic_suggestions_get",
         "parameters": [
           {
-            "description": "Stable Sprint 08 review case identifier.",
+            "description": "Stable Sprint 08 review case identifier, unique within this queue.",
             "in": "path",
             "name": "review_case_id",
             "required": true,
             "schema": {
-              "description": "Stable Sprint 08 review case identifier.",
+              "description": "Stable Sprint 08 review case identifier, unique within this queue.",
               "maxLength": 128,
               "minLength": 1,
               "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque organization identifier.",
+            "in": "path",
+            "name": "organization_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque organization identifier.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Organization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Opaque review queue identifier, owned by the organization above.",
+            "in": "path",
+            "name": "review_queue_id",
+            "required": true,
+            "schema": {
+              "description": "Opaque review queue identifier, owned by the organization above.",
+              "maxLength": 128,
+              "minLength": 1,
+              "title": "Review Queue Id",
               "type": "string"
             }
           }
@@ -1135,7 +1252,7 @@
                   "items": {
                     "$ref": "#/components/schemas/SemanticSuggestionRead"
                   },
-                  "title": "Response List Case Semantic Suggestions Api V1 Review Cases  Review Case Id  Semantic Suggestions Get",
+                  "title": "Response List Case Semantic Suggestions Api V1 Organizations  Organization Id  Review Queues  Review Queue Id  Review Cases  Review Case Id  Semantic Suggestions Get",
                   "type": "array"
                 }
               }

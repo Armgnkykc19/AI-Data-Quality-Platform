@@ -498,14 +498,16 @@ class SqliteTenantRepository:
     def list_all_review_queues(self) -> tuple[ReviewQueue, ...]:
         """Every queue in the installation, across every organization.
 
-        The one deliberately unscoped read in this module, and it exists for
-        exactly two callers: operator tooling, and the transitional binding
-        that lets the still-unauthenticated Sprint 11 API find the single queue
-        a local installation holds (see ``review_api.dependencies``). It
-        answers an installation-wide question, so it must never be reachable
-        from a request whose tenant was decided by a caller. The authenticated
-        wiring resolves a queue from a verified membership instead, and this
-        method plays no part in it.
+        The one deliberately unscoped read in this module, and it now exists for
+        operator tooling alone. The transitional binding that once used it --
+        the sole-queue resolution the unauthenticated Sprint 11 API needed to
+        find a tenant at all -- was removed when the routes gained an
+        authenticated caller, and nothing in the request path calls this.
+
+        It answers an installation-wide question, so it must never become
+        reachable from a request whose tenant was decided by a caller. Tenant
+        authorization resolves a queue from an explicit URL plus a verified
+        membership, and this method plays no part in it.
         """
         rows = (
             self._database.connect()

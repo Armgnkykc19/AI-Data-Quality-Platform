@@ -16,8 +16,9 @@ Not domain messages, not persistence messages, not Pydantic's rendering of a
 value the client submitted. The exception messages in this project are richly
 informative on purpose -- they name entity-resolution config paths, SQL tables,
 schema versions, and stored review state -- and every one of those describes
-the deployment to whoever can reach the port. This API has no authentication,
-so that reader is not necessarily a reviewer.
+the deployment to whoever can reach the port. Authentication narrows that
+reader to someone with an account; it does not make them an operator, and it
+does not make them a member of the tenant the message is about.
 
 The temptation is to forward the messages that look harmless today. The reason
 not to is that the boundary is what has to hold, not the current wording: a
@@ -255,6 +256,50 @@ class UntrustedOriginError(Exception):
     """
 
 
+class TenantScopeNotVisibleError(Exception):
+    """The named organization or review queue is not visible to this caller.
+
+    The second collapse point in this API, and it exists for the same reason as
+    :class:`UnauthenticatedError`. Four distinct internal findings become this
+    one type with one public 404 body: the organization does not exist, the
+    queue does not exist, the queue belongs to a different organization, or the
+    authenticated user holds no membership in the organization.
+
+    Telling them apart would publish the tenant graph. "No such organization"
+    versus "you are not a member" is an existence oracle for every organization
+    id a caller cares to try; "that queue belongs to another organization" names
+    a relationship between two tenants the caller belongs to neither of. A
+    non-member must be able to learn exactly one thing, which is nothing.
+
+    The ``reason`` argument is for the server log only and never for the
+    response.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+class TenantCapabilityError(Exception):
+    """A confirmed member of this organization lacks the capability required.
+
+    Deliberately *not* collapsed into the 404 above, because it is the one
+    refusal that discloses nothing new. Reaching it means the caller has already
+    proven -- through a membership the server read a moment ago -- that the
+    organization exists, that the queue exists, and that they belong there. A
+    404 here would tell a VIEWER their own queue had vanished, which is both
+    false and unactionable.
+
+    The role and the capability stay in the log. The response says only that the
+    request was refused; publishing "you need REVIEWER" would hand an attacker
+    who has compromised a VIEWER account a precise escalation target.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class ApiError(ApiResponseModel):
     code: ErrorCode
     message: str
@@ -453,12 +498,44 @@ async def handle_untrusted_origin(request: Request, exc: Exception) -> Response:
     return error_response(ErrorCode.FORBIDDEN, status_code=HTTP_FORBIDDEN)
 
 
+async def handle_tenant_scope_not_visible(request: Request, exc: Exception) -> Response:
+    """404 for a tenant scope this caller cannot see, whichever way it failed.
+
+    The same static body for all four findings. The internal reason reaches the
+    log so an operator can tell a misconfigured membership from a typo in a
+    queue id; the caller cannot, which is the point.
+
+    ``NOT_FOUND`` rather than a tenant-specific code, and that is deliberate:
+    a distinct ``ORGANIZATION_NOT_FOUND`` or ``MEMBERSHIP_REQUIRED`` token would
+    reintroduce, in a machine-readable field, exactly the distinction this type
+    exists to hide.
+    """
+    reason = getattr(exc, "reason", type(exc).__name__)
+    logger.info("Tenant scope refused on %s %s: %s", request.method, request.url.path, reason)
+    return error_response(ErrorCode.NOT_FOUND, status_code=HTTP_NOT_FOUND)
+
+
+async def handle_tenant_capability(request: Request, exc: Exception) -> Response:
+    """403 for a member whose role does not carry the capability this route needs.
+
+    Shares ``FORBIDDEN`` with the untrusted-origin refusal. Both mean "you are
+    not permitted to do this", neither says why, and a client distinguishes them
+    by what it was doing rather than by a code -- which keeps the public error
+    vocabulary from growing a token per authorization rule.
+    """
+    reason = getattr(exc, "reason", type(exc).__name__)
+    logger.info("Capability refused on %s %s: %s", request.method, request.url.path, reason)
+    return error_response(ErrorCode.FORBIDDEN, status_code=HTTP_FORBIDDEN)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     """Install every handler this API answers with."""
     app.add_exception_handler(RequestValidationError, handle_validation_error)
     app.add_exception_handler(StarletteHTTPException, handle_http_exception)
     app.add_exception_handler(UnauthenticatedError, handle_unauthenticated)
     app.add_exception_handler(UntrustedOriginError, handle_untrusted_origin)
+    app.add_exception_handler(TenantScopeNotVisibleError, handle_tenant_scope_not_visible)
+    app.add_exception_handler(TenantCapabilityError, handle_tenant_capability)
     for exception_type, status_code, code in DOMAIN_ERROR_MAPPINGS:
         app.add_exception_handler(exception_type, make_domain_handler(status_code, code))
     # Registered on its own because it is the one mapping that returns details.

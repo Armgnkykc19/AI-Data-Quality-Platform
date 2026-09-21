@@ -30,7 +30,7 @@ from identity.errors import (  # noqa: E402
     IdentityNotFoundError,
     IdentityValidationError,
 )
-from identity.models import Organization  # noqa: E402
+from identity.models import MembershipRole, Organization, OrganizationMembership  # noqa: E402
 from identity.passwords import Argon2idPasswordHasher  # noqa: E402
 from identity.provisioning import UserProvisioningService  # noqa: E402
 from ingestion.config import load_ingestion_config  # noqa: E402
@@ -117,6 +117,30 @@ def parse_args() -> argparse.Namespace:
     create_user_parser.add_argument("--email", type=str, required=True)
     create_user_parser.add_argument("--display-name", type=str, required=True)
     _add_review_db_argument(create_user_parser)
+
+    # Joining a user to an organization in one role. Every part is explicit and
+    # nothing is inferred: no default role, no "the only organization", and no
+    # creation of either side. A membership is what makes a tenant's review data
+    # reachable at all, so granting one is an operator decision that must be
+    # typed out in full.
+    #
+    # There is no HTTP counterpart to this command and there must not be. An
+    # endpoint that granted memberships would be an endpoint that grants access
+    # to customer review evidence, reachable with a stolen cookie.
+    add_membership_parser = subparsers.add_parser(
+        "add-membership",
+        help="Grant an existing user a role in an existing organization.",
+    )
+    add_membership_parser.add_argument("--user", type=str, required=True)
+    add_membership_parser.add_argument("--organization", type=str, required=True)
+    add_membership_parser.add_argument(
+        "--role",
+        type=str,
+        choices=[role.value for role in MembershipRole],
+        required=True,
+        help="VIEWER may read the queue; REVIEWER may also record decisions.",
+    )
+    _add_review_db_argument(add_membership_parser)
 
     create_queue_parser = subparsers.add_parser(
         "create-review-queue",
@@ -437,7 +461,55 @@ def _create_user(args: argparse.Namespace) -> int:
     # never the hash, and never anything derived from either.
     print(f"Database: {database_path}")
     print(f"Created user {user.email} ({user.user_id}).")
-    print("This user has no organization membership yet.")
+    print("This user has no organization membership yet, and can therefore reach no queue.")
+    print("Grant one with: add-membership --user <email> --organization <slug> --role <ROLE>")
+    return EXIT_OK
+
+
+def _add_membership(args: argparse.Namespace) -> int:
+    """Join one existing user to one existing organization in one explicit role.
+
+    Creates neither side. A user who does not exist is refused rather than
+    provisioned, because provisioning one here would mean an account with no
+    password that nobody can sign into; an organization that does not exist is
+    refused because a typo must not become a tenant.
+
+    Duplicates are deterministic: a user holds exactly one membership per
+    organization, enforced by the schema, so a second grant is refused with the
+    tenant exit code and the stored role is left exactly as it was. Changing
+    someone's role is therefore not something this command can do by accident.
+
+    The role is required and has no default. A default would be a silent
+    decision about whether someone may record human decisions on customer data.
+    """
+    database, database_path = _open_review_queue(args.review_db)
+    try:
+        tenants = SqliteTenantRepository(database)
+        organization = _require_organization(tenants, args.organization)
+        user = tenants.get_user_by_email(args.user)
+        if user is None:
+            # The address is not echoed back into a "no such user" message: this
+            # command is operator-only today, and a message that quotes the
+            # address is an account oracle the moment anything else can reach it.
+            raise IdentityNotFoundError(
+                "No user has that login address. Create one first with 'create-user'; "
+                "this command will not create one for you."
+            )
+        membership = tenants.create_membership(
+            OrganizationMembership.create(
+                organization_id=organization.organization_id,
+                user_id=user.user_id,
+                role=MembershipRole(args.role),
+                created_at_utc=tenants.timestamp(),
+            )
+        )
+    finally:
+        database.close()
+    print(f"Database: {database_path}")
+    print(
+        f"Granted {membership.role.value} in organization {organization.slug} "
+        f"to user {user.user_id}."
+    )
     return EXIT_OK
 
 
@@ -501,6 +573,8 @@ def main() -> int:
             return _list_organizations(args)
         if args.command == "create-user":
             return _create_user(args)
+        if args.command == "add-membership":
+            return _add_membership(args)
         if args.command == "create-review-queue":
             return _create_review_queue(args)
 

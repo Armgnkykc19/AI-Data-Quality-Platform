@@ -232,7 +232,25 @@ CREATE TABLE IF NOT EXISTS {REVIEW_CASES_TABLE} (
 # event_id stays a global AUTOINCREMENT. It is the append order of the history
 # and nothing else; making it queue-local would buy symmetry at the cost of the
 # one property it has to keep, which is that a later row always sorts after an
-# earlier one. It is never published as a tenant-visible identifier.
+# earlier one.
+#
+# It *is* published, on ReviewEventRead, to a caller already authorized for the
+# queue the event belongs to -- and that was re-examined when tenant
+# authorization landed, because a global sequence is an inference channel: the
+# gap between two ids one member caused tells them how many events everyone
+# else wrote in between.
+#
+# It is accepted, and here is the whole of the reasoning. What leaks is a count
+# of installation-wide write activity, to someone who already holds a valid
+# membership; no tenant is named, no case is identified, no content is exposed,
+# and nothing about *which* tenant was busy can be inferred. Closing it means
+# making the id queue-local, which means a composite primary key, which means a
+# DDL change, a schema version bump, a migration for every existing database,
+# and a contract change for a published response field the frontend already
+# reads. That is a large, durable cost against a side channel that reveals
+# aggregate busyness. It is recorded here rather than silently tolerated, and
+# it is the right thing to revisit if these ids ever become visible to anyone
+# who is not already inside a tenant.
 CREATE_REVIEW_CASE_EVENTS = f"""
 CREATE TABLE IF NOT EXISTS {REVIEW_CASE_EVENTS_TABLE} (
     event_id INTEGER PRIMARY KEY AUTOINCREMENT,

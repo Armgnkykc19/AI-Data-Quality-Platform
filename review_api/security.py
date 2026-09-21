@@ -1,17 +1,30 @@
-"""The two dependencies that guard an authenticated request.
+"""The guard chain every tenant-scoped request passes through, in order.
 
-``require_trusted_origin`` decides whether a state-changing request may proceed
-at all. ``get_authenticated_principal`` decides who is making it.
+Four steps, each a dependency, each answering one question::
+
+    require_trusted_origin        may a state-changing request proceed at all?
+    get_authenticated_principal   who is making it?
+    require_capability(...)       may they reach this queue, and do this?
+    scoped_repository / _service  the review layer bound to that one queue
 
 They are dependencies rather than middleware for the reason the rest of this
 API uses dependencies: a route's guarantees are visible in its signature, a
 test can override one through ``app.dependency_overrides``, and adding a route
-that forgot its guard is a diff a reviewer can see. Middleware would move both
-decisions into a path-prefix list somewhere else in the file.
+that forgot its guard is a diff a reviewer can see. Middleware would move all
+four decisions into a path-prefix list somewhere else in the file.
 
 Order is load-bearing and comes for free from where each is placed. FastAPI
 resolves a route's dependencies before its body runs, so a rejected origin
-costs no password verification, renews no session, and revokes nothing.
+costs no password verification, renews no session, and revokes nothing; and an
+unauthorized caller never reaches storage, because the repository is only built
+after the scope is proven.
+
+**One session touch per request, and the structure is what guarantees it.**
+Only ``get_authenticated_principal`` resolves and renews a session. Tenant
+authorization consumes the ``AuthenticatedPrincipal`` it produced and never
+looks at a cookie, and FastAPI caches a dependency's result within a request --
+so a route that depends on both the scope and the scoped service still
+authenticates once, authorizes once, and renews once.
 
 Both are ``async def``, and that is not stylistic. FastAPI runs a *synchronous*
 dependency in a threadpool worker, while every route in this API is ``async``
@@ -25,8 +38,11 @@ the same constraint ``review_api.dependencies`` documents for the routes.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Annotated
 
+from fastapi import Depends, Path
 from starlette.requests import Request
 
 from identity.errors import (
@@ -38,14 +54,52 @@ from identity.errors import (
 from identity.session_service import SessionService
 from identity.sessions import Session
 from review_api.auth_config import AuthHttpConfig
-from review_api.dependencies import get_auth_config, get_session_service
+from review_api.dependencies import (
+    get_auth_config,
+    get_queue_binder,
+    get_session_service,
+    get_tenant_authorization,
+)
 from review_api.errors import UnauthenticatedError, UntrustedOriginError
+from review_api.models import MAX_TENANT_ID_LENGTH
+from review_api.tenancy import Capability, TenantScope
+from review_application import ReviewCaseRepository, ReviewQueueService
 
 __all__ = [
     "AuthenticatedPrincipal",
+    "OrganizationIdPath",
+    "ReadScopeDep",
+    "ResolveScopeDep",
+    "ReviewQueueIdPath",
+    "ScopedRepositoryDep",
+    "ScopedServiceDep",
     "get_authenticated_principal",
     "read_session_cookie",
+    "require_capability",
     "require_trusted_origin",
+]
+
+# Bounds only, on both tenant path segments. The ``ORG-``/``RQ-`` prefixes are
+# not restated here: ``identity.ids.assert_opaque_id`` already owns that rule,
+# and a second copy in the transport layer would be a second thing to keep in
+# step. A malformed id simply matches nothing in storage and becomes the same
+# 404 as an id that was merely never created -- which is exactly the answer the
+# leakage policy wants for both.
+OrganizationIdPath = Annotated[
+    str,
+    Path(
+        min_length=1,
+        max_length=MAX_TENANT_ID_LENGTH,
+        description="Opaque organization identifier.",
+    ),
+]
+ReviewQueueIdPath = Annotated[
+    str,
+    Path(
+        min_length=1,
+        max_length=MAX_TENANT_ID_LENGTH,
+        description="Opaque review queue identifier, owned by the organization above.",
+    ),
 ]
 
 # Methods that do not change state. An Origin check on these would buy nothing
@@ -173,6 +227,84 @@ async def get_authenticated_principal(request: Request) -> AuthenticatedPrincipa
         session_id=session.session_id,
         session=session,
     )
+
+
+PrincipalDep = Annotated[AuthenticatedPrincipal, Depends(get_authenticated_principal)]
+
+
+def require_capability(
+    capability: Capability,
+) -> Callable[..., Awaitable[TenantScope]]:
+    """Build the dependency that proves a scope for one required capability.
+
+    A factory rather than a parameterized dependency because the capability is
+    a property of the *route*, fixed when the route is declared, and never
+    something a request could influence. There is no header, query parameter or
+    body field through which a caller could ask for a different one.
+
+    The returned dependency declares the two tenant path parameters itself. That
+    is what makes the scope inseparable from the URL: there is no spelling of
+    these routes in which an organization or a queue could be defaulted, read
+    from a cookie, inferred from the principal's sole membership, or taken from
+    the body. If a segment is absent the route does not match at all.
+
+    ``async def`` for the same reason the rest of this module is: a synchronous
+    dependency runs in a threadpool worker, and the membership read below goes
+    through the one ``sqlite3`` connection the lifespan opened on the serving
+    thread.
+    """
+
+    async def dependency(
+        request: Request,
+        organization_id: OrganizationIdPath,
+        review_queue_id: ReviewQueueIdPath,
+        principal: PrincipalDep,
+    ) -> TenantScope:
+        return get_tenant_authorization(request).authorize(
+            # The authenticated principal's id, never anything from the request
+            # body or a header. This is also the value the resolution route
+            # hands the domain as reviewer_id.
+            user_id=principal.user_id,
+            organization_id=organization_id,
+            review_queue_id=review_queue_id,
+            capability=capability,
+        )
+
+    return dependency
+
+
+# Declared once each, at module scope, because FastAPI caches a dependency's
+# result per request keyed by the callable. Calling ``require_capability`` again
+# inside a route would produce a second function object, and the scope would be
+# authorized twice for one request.
+ReadScopeDep = Annotated[TenantScope, Depends(require_capability(Capability.READ_REVIEW_QUEUE))]
+ResolveScopeDep = Annotated[
+    TenantScope, Depends(require_capability(Capability.RESOLVE_REVIEW_CASE))
+]
+
+
+async def scoped_repository(request: Request, scope: ReadScopeDep) -> ReviewCaseRepository:
+    """Review storage bound to the queue this request was just authorized for.
+
+    The binding happens here and nowhere earlier. A repository built at startup
+    would have to be built for *some* queue, and whichever one that was would be
+    the queue every request saw.
+    """
+    return get_queue_binder(request).repository_for(scope.review_queue_id)
+
+
+async def scoped_service(request: Request, scope: ResolveScopeDep) -> ReviewQueueService:
+    """The Sprint 10 application service, bound to the authorized queue.
+
+    Depends on the *resolve* scope rather than the read scope, so the service
+    that can record a decision is unreachable without
+    ``RESOLVE_REVIEW_CASE``. A VIEWER's request is refused before this runs.
+    """
+    return get_queue_binder(request).service_for(scope.review_queue_id)
+
+
+ScopedRepositoryDep = Annotated[ReviewCaseRepository, Depends(scoped_repository)]
+ScopedServiceDep = Annotated[ReviewQueueService, Depends(scoped_service)]
 
 
 def _auth_config(request: Request) -> AuthHttpConfig:

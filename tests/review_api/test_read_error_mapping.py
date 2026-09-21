@@ -24,10 +24,8 @@ from review_application import (
     SemanticSuggestionIntegrityError,
 )
 from review_application.errors import ReviewApplicationError
-from tests.review_api.conftest import api_client
+from tests.review_api.conftest import CASES_URL, api_client
 from tests.review_api.fake_repository import FakeReviewCaseRepository
-
-CASES_URL = "/api/v1/review-cases"
 
 # Text of the kind the real errors carry. Every fragment here would be a leak.
 LEAKY_TEXT = (
@@ -135,10 +133,12 @@ def test_every_read_route_is_covered_by_the_mapping(url: str) -> None:
 
 
 def test_an_unwired_application_does_not_invent_an_empty_queue() -> None:
-    """A route reached on an app with no repository is a deployment fault.
+    """A tenant route reached on an app nobody wired is a deployment fault.
 
     It must not answer ``200 []`` -- a client cannot tell that from an empty
-    queue, and a reviewer would read it as "nothing to review".
+    queue, and a reviewer would read it as "nothing to review". Nor may it
+    answer 401 or 404, which would tell a legitimate member that their
+    membership or their queue had gone away.
     """
     from review_api import create_app
 

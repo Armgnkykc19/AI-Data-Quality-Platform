@@ -125,7 +125,9 @@ def test_the_runtime_serves_the_production_application(served: RecordedRun) -> N
     assert app.debug is False
 
 
-def test_the_served_application_publishes_the_sprint_11_surface(served: RecordedRun) -> None:
+def test_the_served_application_publishes_the_tenant_scoped_surface(
+    served: RecordedRun,
+) -> None:
     """Read from the published schema, not from Starlette's internal route list.
 
     ``app.routes`` holds an included router as an opaque object with no ``path``
@@ -133,12 +135,20 @@ def test_the_served_application_publishes_the_sprint_11_surface(served: Recorded
     answer to "what does this application publish", and it builds the document
     without a client and without entering the lifespan -- so this test still
     never opens a database.
+
+    The unscoped assertion is the important half: what the runner serves must
+    have no review path that omits a tenant, because that is the shape an
+    operator would actually be exposing.
     """
     runtime.main([])
 
     paths = served.app.openapi()["paths"]
     assert "/health" in paths
-    assert "/api/v1/review-cases/{review_case_id}/resolve" in paths
+    assert (
+        "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}"
+        "/review-cases/{review_case_id}/resolve" in paths
+    )
+    assert not [path for path in paths if path.startswith("/api/v1/review-cases")]
 
 
 # --------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""A real authenticated API, wired the way production wires one.
+"""A real authenticated, tenant-scoped API, wired the way production wires one.
 
 Every fixture here builds the genuine services over a real SQLite database in
 ``tmp_path``: the real Argon2id hasher, the real session service, the real
@@ -30,6 +30,13 @@ advancing state and reading rows back. WAL means each sees the other's commits.
 Both connections share one ``FrozenClock``, so advancing time in a test
 advances it for the server too.
 
+The tenant layer is wired here too, and identically to ``production_lifespan``:
+a ``SqliteReviewQueueBinder`` that builds a queue-scoped repository per
+authorized request, and a ``TenantAuthorizationService`` over the real tenant
+tables. No queue is resolved at startup, so a fixture may create as many as it
+likes. The helpers on ``AuthFixture`` create organizations, queues, users,
+memberships and workflows through the same primitives the operator CLI uses.
+
 Every path is under ``tmp_path``, so no test here can open
 ``storage/review_queue.db``.
 
@@ -48,17 +55,33 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from entity_resolution.config import load_entity_resolution_config
+from entity_resolution.models import ResolutionResult
+from human_review.cases import generate_review_cases
+from human_review.models import ReviewWorkflowState
+from human_review.reporting import resolution_snapshot
 from identity.authentication import AuthenticationService
 from identity.login import LoginService
-from identity.models import User, UserStatus
+from identity.models import (
+    MembershipRole,
+    Organization,
+    OrganizationMembership,
+    User,
+    UserStatus,
+)
 from identity.provisioning import UserProvisioningService
-from identity.session_service import SessionService
+from identity.session_service import ResolvedSession, SessionService
+from identity.sessions import Session, SessionPolicy
 from review_api import create_app
 from review_api.auth_config import AuthHttpConfig
+from review_api.dependencies import SqliteReviewQueueBinder
+from review_api.tenancy import TenantAuthorizationService
+from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.credential_repository import SqliteCredentialRepository
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
 from review_persistence.sqlite.provisioning_repository import SqliteUserProvisioningRepository
+from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from review_persistence.sqlite.session_repository import SqliteSessionRepository
 from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 from tests.identity.conftest import cheap_hasher
@@ -78,6 +101,48 @@ WRONG_PASSWORD = "incorrect horse battery staple"
 MINUTE = 60
 HOUR = 60 * MINUTE
 
+PROVISIONED_AT = "2026-09-14T07:00:00Z"
+
+
+class CountingSessionService:
+    """A ``SessionService`` that records how often each operation was asked for.
+
+    The instrumentation behind the one-touch guarantee. Timestamps cannot prove
+    it on their own: the fixtures run on a frozen clock, so two renewals inside
+    one request would write the same value twice and look exactly like one.
+    Counting the calls is the only thing that distinguishes them.
+
+    It wraps rather than subclasses, and it is installed only as the
+    application's session service. ``LoginService`` keeps the unwrapped
+    instance, so the counters describe what the *guard chain* did on a request
+    and nothing else.
+    """
+
+    def __init__(self, inner: SessionService) -> None:
+        self._inner = inner
+        self.resolve_calls = 0
+        self.touch_calls = 0
+        self.revoke_calls = 0
+
+    @property
+    def policy(self) -> SessionPolicy:
+        return self._inner.policy
+
+    def reset(self) -> None:
+        self.resolve_calls = self.touch_calls = self.revoke_calls = 0
+
+    def resolve_session(self, raw_token: str) -> ResolvedSession:
+        self.resolve_calls += 1
+        return self._inner.resolve_session(raw_token)
+
+    def touch_session(self, raw_token: str) -> Session:
+        self.touch_calls += 1
+        return self._inner.touch_session(raw_token)
+
+    def revoke_session(self, raw_token: str) -> Session:
+        self.revoke_calls += 1
+        return self._inner.revoke_session(raw_token)
+
 
 @dataclass
 class AuthFixture:
@@ -96,6 +161,92 @@ class AuthFixture:
     tenants: SqliteTenantRepository
     provisioning: UserProvisioningService
     config: AuthHttpConfig
+    counters: CountingSessionService
+
+    # -- tenant graph -------------------------------------------------------
+    #
+    # All of these write through the control connection while the server is
+    # running. WAL means the server's next read sees them, which is what lets a
+    # test change a membership mid-session and watch authorization change with
+    # it -- the thing a role cached at login could never do.
+
+    def create_organization(self, slug: str) -> Organization:
+        return self.tenants.create_organization(
+            Organization.create(slug=slug, display_name=slug, created_at_utc=PROVISIONED_AT)
+        )
+
+    def create_queue(self, organization: Organization, name: str = "default") -> ReviewQueue:
+        return self.tenants.create_review_queue(
+            ReviewQueue.create(
+                organization_id=organization.organization_id,
+                name=name,
+                created_at_utc=PROVISIONED_AT,
+            )
+        )
+
+    def grant(
+        self,
+        user: User,
+        organization: Organization,
+        role: MembershipRole,
+    ) -> OrganizationMembership:
+        """The operator action, through the production persistence primitive."""
+        return self.tenants.create_membership(
+            OrganizationMembership.create(
+                organization_id=organization.organization_id,
+                user_id=user.user_id,
+                role=role,
+                created_at_utc=PROVISIONED_AT,
+            )
+        )
+
+    def set_role(self, user: User, organization: Organization, role: MembershipRole) -> None:
+        """Change a stored role out of band, the way ``disable`` changes a status.
+
+        There is no production role-mutation primitive, deliberately, and Phase
+        E did not add one to make a test convenient. Writing the authoritative
+        row directly is also the stronger setup: it proves authorization reads
+        current state rather than something a service handed it.
+        """
+        self.database.connect().execute(
+            "UPDATE organization_memberships SET role = ? "
+            "WHERE organization_id = ? AND user_id = ?",
+            (role.value, organization.organization_id, user.user_id),
+        )
+
+    def repository_for(self, queue: ReviewQueue) -> SqliteReviewCaseRepository:
+        """A control-side repository bound to one queue, for seeding and verifying."""
+        return SqliteReviewCaseRepository(self.database, review_queue_id=queue.review_queue_id)
+
+    def register_workflow(
+        self,
+        queue: ReviewQueue,
+        resolution: ResolutionResult,
+    ) -> ReviewWorkflowState:
+        """Fill one queue from a real generated workflow.
+
+        Goes through ``register_workflow`` with the real Sprint 08 reduction, so
+        the queue holds the authorization context a resolution will be judged
+        against rather than a hand-built row. Returns the generated state, so a
+        caller has the real ``ReviewCase`` objects and not only their ids.
+        """
+        state = generate_review_cases(resolution, config=load_entity_resolution_config())
+        assert state.cases, "Fixture resolution must produce at least one REVIEW case."
+        self.repository_for(queue).register_workflow(
+            state,
+            entity_records=resolution.records,
+            resolution_snapshot=resolution_snapshot(resolution),
+            entity_resolution_config_path="configs/entity_resolution.yaml",
+            now_utc=PROVISIONED_AT,
+        )
+        return state
+
+    @staticmethod
+    def cases_url(organization: Organization, queue: ReviewQueue) -> str:
+        return (
+            f"/api/v1/organizations/{organization.organization_id}"
+            f"/review-queues/{queue.review_queue_id}/review-cases"
+        )
 
     # -- helpers ------------------------------------------------------------
 
@@ -202,6 +353,10 @@ def build_auth_fixture(
     """
     clock = FrozenClock()
     hasher = cheap_hasher()
+    # Filled when the lifespan runs, on the serving thread. A one-element list
+    # rather than a nonlocal, because the lifespan is defined before the
+    # fixture object it has to reach exists.
+    counters_holder: list[CountingSessionService | None] = [None]
     persistence = ReviewPersistenceConfig(
         database_path=tmp_path / "auth.db", busy_timeout_ms=2000, journal_mode="WAL"
     )
@@ -228,7 +383,9 @@ def build_auth_fixture(
                 users=server_users,
                 clock=clock,
             )
-            app.state.session_service = server_sessions
+            # The application sees the counting wrapper; login keeps the real
+            # service, so the counters measure the guard chain alone.
+            app.state.session_service = counters_holder[0] = CountingSessionService(server_sessions)
             app.state.login_service = LoginService(
                 authentication=AuthenticationService(
                     users=server_users,
@@ -238,10 +395,16 @@ def build_auth_fixture(
                 ),
                 sessions=server_sessions,
             )
+            # Wired exactly as ``production_lifespan`` wires it: no queue is
+            # resolved, and nothing knows which one a request will want.
+            app.state.queue_binder = SqliteReviewQueueBinder(server_database)
+            app.state.tenant_authorization = TenantAuthorizationService(server_users)
             yield
         finally:
             app.state.session_service = None
             app.state.login_service = None
+            app.state.queue_binder = None
+            app.state.tenant_authorization = None
             server_database.close()
 
     # The control connection. Created first so the schema exists before the
@@ -252,6 +415,7 @@ def build_auth_fixture(
     app = create_app(auth_config=config, lifespan=lifespan)
     try:
         with TestClient(app) as client:
+            assert counters_holder[0] is not None, "the lifespan did not run"
             yield AuthFixture(
                 client=client,
                 database=control,
@@ -268,6 +432,7 @@ def build_auth_fixture(
                     clock=clock,
                 ),
                 config=config,
+                counters=counters_holder[0],
             )
     finally:
         control.close()

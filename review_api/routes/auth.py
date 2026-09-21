@@ -23,10 +23,11 @@ whether the account exists, not whether it is disabled, not whether the session
 was revoked rather than expired, and not which of the two expiry bounds ended
 it.
 
-These are the only authenticated endpoints in this build. The review routes are
-deliberately untouched -- adding identity to them without tenant authorization
-would produce a half-secured surface where a logged-in user can read every
-tenant's queue, which is worse than an honestly unauthenticated one.
+These are not the only authenticated endpoints any more. The tenant-scoped
+review routes require the same principal dependency and then go further, asking
+``review_api.tenancy`` whether that principal may reach the organization and
+queue their URL names. Nothing in this module makes such a decision: these
+routes establish identity, and identity alone grants access to nothing.
 """
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ from review_api.dependencies import get_auth_config, get_login_service, get_sess
 from review_api.errors import UnauthenticatedError
 from review_api.security import (
     AuthenticatedPrincipal,
-    get_authenticated_principal,
+    PrincipalDep,
     read_session_cookie,
     require_trusted_origin,
 )
@@ -56,10 +57,10 @@ AuthConfigDep = Annotated[AuthHttpConfig, Depends(get_auth_config)]
 LoginServiceDep = Annotated[LoginService, Depends(get_login_service)]
 SessionServiceDep = Annotated[SessionService, Depends(get_session_service)]
 
-# The identity every authenticated route reads. Declaring it in the signature
-# is what makes "this route requires a session, and renews it" visible at the
-# route rather than in a middleware path list somewhere else.
-PrincipalDep = Annotated[AuthenticatedPrincipal, Depends(get_authenticated_principal)]
+# ``PrincipalDep`` is imported rather than redeclared. Two annotations naming
+# the same dependency would work -- FastAPI caches by the callable -- but one
+# definition means "this route requires a session, and renews it" has a single
+# spelling that the tenant routes share.
 
 # Declared as a route dependency rather than called in the body, so FastAPI
 # resolves it before the endpoint runs. A forged cross-site request therefore

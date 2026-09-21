@@ -12,9 +12,9 @@ So this file does the real sequence, with nothing between the steps stubbed:
 1. an operator creates an organization, a queue, and a user, through the real
    CLI, against a temporary database;
 2. ``create_production_app()`` serves it through the real lifespan, which opens
-   the database, resolves the queue, builds the Argon2 hasher and the session
-   services, and loads the cookie and origin configuration from
-   ``configs/auth_http.yaml``;
+   the database, builds the queue binder and the tenant authorization service,
+   builds the Argon2 hasher and the session services, and loads the cookie and
+   origin configuration from ``configs/auth_http.yaml``;
 3. a browser-shaped client logs in, reads its session, continues it, logs out,
    and is refused afterwards.
 
@@ -93,9 +93,11 @@ def run_command(monkeypatch: pytest.MonkeyPatch, *argv: str) -> int:
 def provision(monkeypatch: pytest.MonkeyPatch) -> None:
     """Everything an operator does before anyone can sign in.
 
-    The queue exists because ``resolve_sole_review_queue`` refuses to start the
-    server without exactly one -- the transitional binding Phase B documented,
-    unchanged here.
+    The organization and the queue are created because a real installation has
+    them, not because the server needs them: nothing is resolved at startup any
+    more, and this application would serve just as happily with none or with
+    five. Deliberately **no membership** is granted -- the tests below are about
+    identity, and one of them depends on this user reaching nothing.
     """
     assert (
         run_command(
@@ -217,24 +219,75 @@ def test_the_served_application_loads_the_committed_cookie_policy(
     assert all(origin.startswith("http://127.0.0.1") for origin in config.allowed_origins)
 
 
-def test_review_routes_are_still_unauthenticated(
+def test_no_unscoped_review_route_is_reachable(
     monkeypatch: pytest.MonkeyPatch,
     configured: Path,
 ) -> None:
-    """The phase boundary, asserted rather than assumed.
+    """The phase boundary moved, and this is where it moved to.
 
-    Adding identity to the review routes without tenant authorization would
-    produce a surface where any signed-in user reads every tenant's queue --
-    worse than an honestly unauthenticated one. So they stay exactly as they
-    were until the phase that scopes them.
+    Phase D left the review routes honestly unauthenticated, because adding
+    identity without tenant authorization would have produced a surface where
+    any signed-in user reads every tenant's queue. Phase E scoped them instead
+    of authenticating them in place, so the unscoped paths no longer exist at
+    all -- not even behind a session.
     """
     provision(monkeypatch)
 
     with serve() as client:
         response = client.get("/api/v1/review-cases")
 
-        assert response.status_code == 200
-        assert response.json()["total"] == 0
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def test_a_signed_in_user_with_no_membership_reaches_no_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    configured: Path,
+) -> None:
+    """Logging in grants access to nothing, and this is the proof.
+
+    The provisioned user has a password and a real session, and the
+    installation has a real organization holding a real queue. Without a
+    membership they get the same 404 a stranger naming an invented tenant would
+    -- authentication and authorization are genuinely separate answers.
+    """
+    provision(monkeypatch)
+
+    with serve() as client:
+        login = client.post(
+            f"{BASE}/login",
+            json={"email": EMAIL, "password": PASSWORD},
+            headers={"Origin": ALLOWED_ORIGIN},
+        )
+        assert login.status_code == 200
+        organization_id, queue_id = provisioned_ids(configured)
+
+        response = client.get(
+            f"/api/v1/organizations/{organization_id}/review-queues/{queue_id}/review-cases"
+        )
+
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def provisioned_ids(database: Path) -> tuple[str, str]:
+    """The real ids of the organization and queue the CLI just created."""
+    from review_persistence.sqlite import SqliteTenantRepository, open_review_database
+
+    connection = open_review_database(
+        ReviewPersistenceConfig(database_path=database, busy_timeout_ms=2000, journal_mode="WAL")
+    )
+    try:
+        tenants = SqliteTenantRepository(connection)
+        organization = tenants.get_organization_by_slug(ORGANIZATION_SLUG)
+        assert organization is not None
+        queue = tenants.get_review_queue_by_name(
+            organization_id=organization.organization_id, name=QUEUE_NAME
+        )
+        assert queue is not None
+        return organization.organization_id, queue.review_queue_id
+    finally:
+        connection.close()
 
 
 def test_health_is_still_unauthenticated(

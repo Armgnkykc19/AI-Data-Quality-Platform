@@ -34,10 +34,25 @@ from human_review.models import (
     ReviewWorkflowState,
 )
 from human_review.workflow import ReviewWorkflow
+from identity.models import MembershipRole
 from review_api import create_app
+from review_api.auth_config import AuthHttpConfig
+from review_api.security import get_authenticated_principal
+from review_api.tenancy import TenantAuthorizationService
 from review_application import PersistedCase, ReviewEvent, ReviewResolutionResult
 from tests.human_review.conftest import make_review_resolution, match_authorization_kwargs
 from tests.review_api.auth_fixtures import AuthFixture, build_auth_fixture
+from tests.review_api.tenant_support import (
+    TEST_ORIGIN,
+    FakeQueueBinder,
+    FakeTenantDirectory,
+    make_principal,
+    tenant_path,
+)
+
+# The scoped prefix every review URL in this package is built from. There is no
+# unscoped spelling to fall back to.
+CASES_URL = tenant_path()
 
 # Values that could not plausibly appear in this API's own vocabulary, so a test
 # can assert they are absent from a response and mean it.
@@ -249,9 +264,40 @@ def resolution_event(state: ReviewWorkflowState, *, event_id: int = 2) -> Review
     )
 
 
+def tenant_app(
+    *,
+    repository: object = None,
+    service: object = None,
+    role: MembershipRole | None = MembershipRole.REVIEWER,
+) -> FastAPI:
+    """An app whose tenant routes are reachable, without a login in the way.
+
+    The authorization *policy* is real: ``TenantAuthorizationService`` runs over
+    ``FakeTenantDirectory``, so a route that forgot its scope dependency, or
+    asked for the wrong queue, fails in these tests too. What is replaced is the
+    session resolution, through the documented ``dependency_overrides`` seam --
+    a projection test should not need a cookie, and the real cookie path is
+    proven against real storage in ``test_tenant_authorization``.
+
+    Overriding the principal rather than the scope is deliberate: the override
+    stops exactly at "who is this", which is the one layer these tests are not
+    about.
+    """
+    app = create_app(
+        queue_binder=FakeQueueBinder(repository=repository, service=service),  # type: ignore[arg-type]
+        tenant_authorization=TenantAuthorizationService(FakeTenantDirectory(role=role)),
+        # A real policy object, so the resolve route's Origin requirement is
+        # exercised here rather than disabled.
+        auth_config=AuthHttpConfig(session_cookie_secure=False, allowed_origins=(TEST_ORIGIN,)),
+    )
+    principal = make_principal()
+    app.dependency_overrides[get_authenticated_principal] = lambda: principal
+    return app
+
+
 def api_client(repository: object) -> TestClient:
     """A client over an app wired to the given repository and nothing else."""
-    return TestClient(create_app(repository=repository))  # type: ignore[arg-type]
+    return TestClient(tenant_app(repository=repository))
 
 
 # --------------------------------------------------------------------------
@@ -283,8 +329,19 @@ def resolution_result(
 
 
 def service_client(service: object) -> TestClient:
-    """A client over an app wired to the given service and no repository."""
-    return TestClient(create_app(service=service), raise_server_exceptions=False)  # type: ignore[arg-type]
+    """A client over an app wired to the given service and no repository.
+
+    Sends the trusted ``Origin`` on every request by default. The header is a
+    property of the browser these routes are built for, not of each individual
+    assertion, so setting it once here keeps the transport tests about what they
+    are about -- while the dedicated Origin tests in ``test_tenant_authorization``
+    send it explicitly, omit it, and forge it.
+    """
+    return TestClient(
+        tenant_app(service=service),
+        headers={"Origin": TEST_ORIGIN},
+        raise_server_exceptions=False,
+    )
 
 
 # --------------------------------------------------------------------------

@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from review_api import create_app
-from review_api.dependencies import get_repository, get_service
+from review_api.dependencies import get_queue_binder, get_tenant_authorization
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 API_PACKAGE = Path("review_api")
@@ -195,8 +195,9 @@ def test_the_resolution_route_goes_through_the_application_service() -> None:
     """The route module names the service, and reaches the domain no other way."""
     source = code_without_prose(ROUTES_PACKAGE / "review_cases.py")
 
-    assert "ReviewQueueService" in source
-    assert "get_service" in source
+    # The route reaches the service only through the scoped dependency, which is
+    # itself unreachable without a proven tenant scope.
+    assert "ScopedServiceDep" in source
     # The authority call, and the only one a route may make to decide anything.
     assert "resolve_case" in source
     # Things a route would have to name if it were deciding for itself.
@@ -259,11 +260,12 @@ def test_no_lower_layer_imports_the_api(package: str) -> None:
     assert offenders == []
 
 
-def test_no_script_was_wired_to_the_api_in_phase_a() -> None:
-    """The CLIs are untouched.
+def test_no_script_imports_the_api() -> None:
+    """The CLIs and the HTTP surface stay independent entry points.
 
-    Sprint 11 adds an HTTP surface beside the existing entry points, not through
-    them. Registering a queue from a CLI is a Phase D deliverable.
+    The operator commands -- creating a tenant, a queue, a user, a membership,
+    registering a workflow -- must keep working with no HTTP layer in the
+    picture, and the API must not be able to call one.
     """
     offenders = [
         str(path)
@@ -366,21 +368,37 @@ def test_no_api_module_imports_a_model_provider() -> None:
 
 
 def test_dependencies_return_what_was_injected() -> None:
-    repository, service = object(), object()
-    app = create_app(repository=repository, service=service)  # type: ignore[arg-type]
+    binder, authorization = object(), object()
+    app = create_app(queue_binder=binder, tenant_authorization=authorization)  # type: ignore[arg-type]
     request = SimpleNamespace(app=app)
 
-    assert get_repository(request) is repository  # type: ignore[arg-type]
-    assert get_service(request) is service  # type: ignore[arg-type]
+    assert get_queue_binder(request) is binder  # type: ignore[arg-type]
+    assert get_tenant_authorization(request) is authorization  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("accessor", [get_repository, get_service])
+def test_no_unscoped_repository_or_service_accessor_exists() -> None:
+    """The bypass this phase removed, asserted rather than remembered.
+
+    ``get_repository`` and ``get_service`` returned an application-wide,
+    single-queue object. Either one surviving would be a way for a route to
+    reach review storage without a tenant scope having been proven -- which is
+    precisely the shape of the old unauthenticated surface.
+    """
+    import review_api.dependencies as dependencies
+
+    assert not hasattr(dependencies, "get_repository")
+    assert not hasattr(dependencies, "get_service")
+    assert not hasattr(dependencies, "resolve_sole_review_queue")
+
+
+@pytest.mark.parametrize("accessor", [get_queue_binder, get_tenant_authorization])
 def test_an_unwired_app_fails_loudly_rather_than_silently(accessor: object) -> None:
     """A deployment fault, not a client error.
 
     Reaching a storage-backed route on an application nobody wired must raise,
     so the catch-all handler turns it into a static 500 instead of the route
-    inventing an empty answer.
+    inventing an empty answer -- or, worse, an unwired authorization service
+    letting every request through.
     """
     request = SimpleNamespace(app=create_app())
 
