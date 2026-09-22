@@ -127,7 +127,7 @@ class ReviewCaseSummary(ApiResponseModel):
     where the case stands, and carry the version a later resolution will have to
     echo back. Evidence is deliberately absent: it belongs to the decision
     screen, and shipping it for every row would put the whole queue's
-    customer-derived detail into one unauthenticated response.
+    customer-derived detail into one response.
     """
 
     review_case_id: str

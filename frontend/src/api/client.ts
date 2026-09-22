@@ -211,10 +211,10 @@ export function getReviewEvents(
 /**
  * `GET /api/v1/review-cases/{id}/semantic-suggestions`. A bare array.
  *
- * Reading only. Sprint 11 exposes no live semantic generation over HTTP at
- * all, so there is no counterpart to this function and none may be added: it
- * would put a provider call and a spend decision in an unauthenticated
- * request path.
+ * Reading only. The API exposes no live semantic generation over HTTP at all,
+ * so there is no counterpart to this function and none may be added: it would
+ * put a provider call and a spend decision in a reviewer-triggered request
+ * path.
  */
 export function getSemanticSuggestions(
   reviewCaseId: string,

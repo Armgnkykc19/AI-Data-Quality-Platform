@@ -26,9 +26,9 @@ import react from '@vitejs/plugin-react';
  *  any non-loopback host, so a non-loopback target here could never be right. */
 const API_ORIGIN = 'http://127.0.0.1:8000';
 
-/** Loopback, never 0.0.0.0. Vite's proxy would otherwise republish an
- *  unauthenticated decision endpoint to the local network, which is exactly
- *  what `review_api.__main__.is_loopback` exists to prevent on the API side. */
+/** Loopback, never 0.0.0.0. Vite's proxy would otherwise republish the
+ *  decision endpoint to the local network, which is exactly what
+ *  `review_api.__main__.is_loopback` exists to prevent on the API side. */
 const LOOPBACK_HOST = '127.0.0.1';
 
 const DEV_PORT = 5173;

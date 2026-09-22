@@ -120,10 +120,14 @@ async def list_review_cases(
     this layer deciding what a status token means, and there is already exactly
     one answer to that in ``human_review.models``.
 
-    Filtering is the repository's job and slicing is this route's. ``total``
-    counts the filtered set before the slice, so an offset past the end returns
-    an empty page that still says how many cases matched -- and every number
-    here counts only this queue, because the repository cannot see another.
+    Filtering, ordering, counting and the ``limit``/``offset`` window are all
+    delegated to the queue-scoped repository and evaluated in SQLite. This
+    route validates the pagination parameters, forwards them, and shapes the
+    response; it holds no page of its own to slice. ``total`` counts the
+    filtered set independently of the window, so an offset past the end
+    returns an empty page that still says how many cases matched -- and every
+    number here counts only this queue, because the repository cannot see
+    another.
     """
     total = repository.count_cases(status=status)
     page = repository.list_cases(status=status, limit=limit, offset=offset)
