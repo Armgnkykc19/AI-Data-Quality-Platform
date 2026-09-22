@@ -33,6 +33,7 @@ from dataset.manifest import (
     GroundTruth,
     build_manifest,
     corruption_to_dict,
+    generation_fingerprint,
     ground_truth_to_dict,
     write_json,
     write_jsonl,
@@ -267,6 +268,15 @@ def build_golden_dataset(
                 "dataset_config": str(dataset_config.raw),
                 "canonical_fields": list(CANONICAL_FIELDS),
             },
+        )
+        manifest["config_fingerprint"] = generation_fingerprint(
+            version=dataset_config.version,
+            seed=dataset_config.seed,
+            record_count=dataset_config.record_count,
+            splits=dataset_config.splits,
+            sources=dataset_config.sources,
+            hard_cases=dataset_config.hard_cases,
+            canonical_fields=list(CANONICAL_FIELDS),
         )
         manifest["malformed_fixtures"] = malformed_manifest
 

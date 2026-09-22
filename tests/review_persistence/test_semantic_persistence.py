@@ -1074,6 +1074,7 @@ def test_the_protocol_surface_is_now_complete(
         "register_workflow",
         "get_case",
         "list_cases",
+        "count_cases",
         "load_workflow_bundle",
         "apply_resolution",
         "list_events",

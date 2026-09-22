@@ -95,6 +95,11 @@ class SqliteReviewQueueBinder:
     consulted without one, so it adds no ambient state; a service is stateless
     with respect to the queue's *contents*, since ``resolve_case`` builds a
     fresh ``ReviewWorkflow`` from storage on every call.
+
+    Growth is bounded by the distinct queue ids this process has actually
+    addressed. Evicting an entry would drop its loaded ER config and risk the
+    threshold inconsistency the cache exists to prevent, so there is no LRU.
+    Authorization never consults this map for membership.
     """
 
     def __init__(self, database: ReviewDatabase) -> None:

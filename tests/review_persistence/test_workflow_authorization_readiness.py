@@ -45,6 +45,7 @@ from human_review.workflow import ReviewWorkflow
 from review_application.models import WorkflowBundle
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from tests.human_review.conftest import make_record, make_review_resolution
+from tests.review_persistence.conftest import seed_resolved_case
 
 
 def _report_payload_from_bundle(bundle: WorkflowBundle) -> dict[str, Any]:
@@ -388,10 +389,12 @@ def test_reloaded_bundle_still_sees_a_prior_human_no_match(
         reviewer_id="reviewer-1",
     )
 
-    repository.register_workflow(
-        resolved_state,
-        entity_records=resolution.records,
-        resolution_snapshot=resolution_snapshot(resolution),
+    seed_resolved_case(
+        repository,
+        pending_state=state,
+        resolved_state=resolved_state,
+        review_case_id=ac_case.review_case_id,
+        resolution=resolution,
         entity_resolution_config_path="configs/entity_resolution.yaml",
     )
 

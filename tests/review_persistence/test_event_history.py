@@ -47,7 +47,11 @@ from tests.human_review.conftest import (
     make_chain_review_resolution,
     make_triangle_review_resolution,
 )
-from tests.review_persistence.conftest import FrozenClock, bound_repository
+from tests.review_persistence.conftest import (
+    FrozenClock,
+    bound_repository,
+    seed_eventless_resolved_case,
+)
 
 CONFIG_PATH = "configs/entity_resolution.yaml"
 
@@ -241,6 +245,7 @@ def test_the_audit_trail_is_rebuilt_from_events(
 
 def test_a_queue_with_no_events_still_derives_its_next_sequence(
     repository: SqliteReviewCaseRepository,
+    database: ReviewDatabase,
     resolution_config: EntityResolutionConfig,
 ) -> None:
     """Bootstrap compatibility: a Phase C database has resolved cases and no events.
@@ -248,6 +253,10 @@ def test_a_queue_with_no_events_still_derives_its_next_sequence(
     The sequence and the audit entry are both recoverable from the resolution
     the domain already stamped on the case, so an imported queue stays usable
     rather than failing to load.
+
+    The eventless row is seeded in SQL because no supported operation produces
+    one -- see ``seed_eventless_resolved_case``. That is the shape being
+    covered: a database written before the event table existed.
     """
     resolution = make_triangle_review_resolution(("rec-a", "rec-b", "rec-c"))
     state = generate_review_cases(resolution, config=resolution_config)
@@ -259,8 +268,15 @@ def test_a_queue_with_no_events_still_derives_its_next_sequence(
         decision=HumanReviewDecision.NO_MATCH,
         reviewer_id="reviewer-1",
     )
-    register(repository, resolved, resolution)
-    assert repository.list_events(ac_case.review_case_id) == ()
+    seed_eventless_resolved_case(
+        repository,
+        database,
+        pending_state=state,
+        resolved_state=resolved,
+        review_case_id=ac_case.review_case_id,
+        resolution=resolution,
+        entity_resolution_config_path=CONFIG_PATH,
+    )
 
     bundle = repository.load_workflow_bundle()
 
@@ -270,10 +286,11 @@ def test_a_queue_with_no_events_still_derives_its_next_sequence(
 
 def test_imported_and_newly_resolved_decisions_share_one_trail(
     repository: SqliteReviewCaseRepository,
+    database: ReviewDatabase,
     service: ReviewQueueService,
     resolution_config: EntityResolutionConfig,
 ) -> None:
-    """A case resolved before registration and one resolved after must interleave.
+    """A legacy eventless decision and one resolved after it must interleave.
 
     The imported decision left no event; the new one did. Both belong to the
     same audit trail, and the next sequence must account for both.
@@ -283,14 +300,18 @@ def test_imported_and_newly_resolved_decisions_share_one_trail(
     ac_case = next(
         case for case in state.cases if case.pair == RecordPair.ordered("rec-a", "rec-c")
     )
-    register(
+    seed_eventless_resolved_case(
         repository,
-        ReviewWorkflow(state).resolve_case(
+        database,
+        pending_state=state,
+        resolved_state=ReviewWorkflow(state).resolve_case(
             ac_case.review_case_id,
             decision=HumanReviewDecision.NO_MATCH,
             reviewer_id="reviewer-1",
         ),
-        resolution,
+        review_case_id=ac_case.review_case_id,
+        resolution=resolution,
+        entity_resolution_config_path=CONFIG_PATH,
     )
 
     ab_case = next(
@@ -516,6 +537,7 @@ def test_the_reconstructed_state_equals_the_in_memory_sprint_08_state(
 
 def test_report_equivalence_holds_for_an_imported_decision_too(
     repository: SqliteReviewCaseRepository,
+    database: ReviewDatabase,
     service: ReviewQueueService,
     resolution_config: EntityResolutionConfig,
 ) -> None:
@@ -524,14 +546,18 @@ def test_report_equivalence_holds_for_an_imported_decision_too(
     ac_case = next(
         case for case in state.cases if case.pair == RecordPair.ordered("rec-a", "rec-c")
     )
-    register(
+    seed_eventless_resolved_case(
         repository,
-        ReviewWorkflow(state).resolve_case(
+        database,
+        pending_state=state,
+        resolved_state=ReviewWorkflow(state).resolve_case(
             ac_case.review_case_id,
             decision=HumanReviewDecision.NO_MATCH,
             reviewer_id="reviewer-1",
         ),
-        resolution,
+        review_case_id=ac_case.review_case_id,
+        resolution=resolution,
+        entity_resolution_config_path=CONFIG_PATH,
     )
     ab_case = next(
         case for case in state.cases if case.pair == RecordPair.ordered("rec-a", "rec-b")

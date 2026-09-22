@@ -79,6 +79,9 @@ def exercise_every_method(
     repository.get_case(case_id)
     repository.list_cases()
     repository.list_cases(status=state.cases[0].status)
+    repository.list_cases(status=state.cases[0].status, limit=1, offset=0)
+    repository.count_cases()
+    repository.count_cases(status=state.cases[0].status)
     repository.load_workflow_bundle()
     repository.list_events(case_id)
 

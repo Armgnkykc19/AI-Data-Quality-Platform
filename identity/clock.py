@@ -25,11 +25,17 @@ for review cases lives in the application layer rather than in persistence.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from identity.errors import IdentityValidationError
+
 __all__ = [
     "Clock",
+    "TIMESTAMP_LENGTH",
+    "TIMESTAMP_PATTERN",
+    "assert_canonical_timestamp",
     "parse_utc_timestamp",
     "system_utc_now",
     "utc_now",
@@ -37,6 +43,48 @@ __all__ = [
 ]
 
 Clock = Callable[[], datetime]
+
+# The canonical persisted form: ``YYYY-MM-DDTHH:MM:SSZ``, exactly 20 characters.
+#
+# These are not decoration. Session expiry is evaluated in SQL by comparing
+# these strings -- ``idle_expires_at_utc > ?`` in
+# ``review_persistence.sqlite.session_repository`` -- and a CHECK constraint
+# compares two of them to each other. String comparison is only equivalent to
+# chronological comparison while every stamp is the same width, in the same
+# zone, with the same fractional-second policy.
+#
+# Each property below is load-bearing for that equivalence:
+#
+# * fixed width -- ``"2026-1-2..."`` would sort before ``"2026-10-..."``;
+# * zero-padded, four-digit year -- same reason, at the other end;
+# * always UTC and always ``Z`` -- ``+03:00`` sorts after ``Z`` while
+#   describing an *earlier* instant, so one offset stamp inverts the ordering;
+# * second resolution with no fractional part -- a mixture of ``:00Z`` and
+#   ``:00.5Z`` compares the shorter as smaller by prefix, which happens to be
+#   right, but ``:00.5Z`` against ``:01Z`` only works because of the digit at
+#   position 18. Keeping fractions out entirely removes the reasoning.
+#
+# A future change to the formatter would break SQL ordering silently -- no
+# exception, no failing insert, just expiry comparisons that are wrong for some
+# pairs of timestamps. So the shape is asserted rather than assumed.
+TIMESTAMP_LENGTH = 20
+TIMESTAMP_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+
+
+def assert_canonical_timestamp(value: str) -> str:
+    """Return ``value`` if it is a canonical stored stamp, or raise.
+
+    Cheap enough to run on every format call: one length check and one
+    anchored match on a 20-character string.
+    """
+    if len(value) != TIMESTAMP_LENGTH or not TIMESTAMP_PATTERN.match(value):
+        raise IdentityValidationError(
+            f"{value!r} is not a canonical UTC timestamp. Stored stamps must be exactly "
+            f"{TIMESTAMP_LENGTH} characters of the form YYYY-MM-DDTHH:MM:SSZ, because SQL "
+            "predicates and CHECK constraints compare them as strings and rely on "
+            "lexicographic order matching chronological order."
+        )
+    return value
 
 
 def system_utc_now() -> datetime:
@@ -66,8 +114,15 @@ def format_utc_timestamp(moment: datetime) -> str:
     Fixed width and always ``Z``-suffixed, which is what makes the stored
     strings sort lexicographically in the same order as the instants they
     describe. Several SQL predicates and CHECK constraints depend on that.
+
+    The result is checked rather than trusted. This function is the only
+    producer of stored timestamps, so a change to it -- a different resolution,
+    a preserved offset, a locale-dependent format -- would propagate to every
+    comparison in the database and fail nowhere. The assertion turns that into
+    an immediate error at the one place it can still be attributed.
     """
-    return moment.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    formatted = moment.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return assert_canonical_timestamp(formatted)
 
 
 def parse_utc_timestamp(value: str) -> datetime:

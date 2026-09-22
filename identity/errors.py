@@ -22,6 +22,7 @@ __all__ = [
     "IdentityNotFoundError",
     "IdentityValidationError",
     "InactiveUserError",
+    "OrganizationNotActiveError",
     "PasswordHashingError",
     "SessionError",
     "SessionExpiredError",
@@ -63,6 +64,35 @@ class InactiveUserError(IdentityError):
     for a disabled account, or resolving a session whose owner has since been
     disabled. It is deliberately *not* what a failed login raises: see
     ``AuthenticationFailedError``.
+    """
+
+
+class OrganizationNotActiveError(IdentityError):
+    """The organization exists but its status forbids ordinary work in it.
+
+    ``OrganizationStatus`` means "whether this organization's queues may be
+    worked on", so a tenant that is not ACTIVE is one whose queues may not be.
+    HTTP has enforced that since Sprint 13: ``review_api.tenancy`` refuses the
+    whole scope and answers a generic 404, because telling a caller that a
+    tenant exists but is suspended would publish a customer's commercial state
+    to anyone who could guess an id.
+
+    This error is the operator-side half of the same policy, added in Sprint 14
+    Phase A. Creating a queue, granting a membership, or registering a workflow
+    are ordinary business operations, and they are refused in a suspended
+    organization rather than quietly succeeding -- otherwise "suspended" would
+    mean only "unreachable over HTTP", and an operator command could keep
+    growing a tenant that is supposed to be inert.
+
+    Unlike the HTTP path this says plainly what is wrong. An operator is
+    running a local administrative command against a database they already
+    hold, so there is no existence to leak and an unexplained refusal would
+    only invite a workaround.
+
+    It is deliberately *not* raised by reads, by session resolution, or by
+    ``apply_resolution``. Suspension makes a tenant inert; it does not delete
+    its data, invalidate its history, or need a second enforcement point where
+    HTTP already has one.
     """
 
 

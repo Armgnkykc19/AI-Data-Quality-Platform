@@ -1,13 +1,21 @@
 """SQLite connection factory and schema initialization.
 
-Two properties matter more than anything else in this module.
+Three properties matter more than anything else in this module.
 
 First, SQLite leaves ``PRAGMA foreign_keys`` OFF by default, and the setting is
 per connection, not per database. Every ``REFERENCES`` clause in the Phase A
 schema is inert on a connection that forgot it, so the pragma is applied in one
 place -- :meth:`ReviewDatabase.connect` -- and nothing else opens a connection.
 
-Second, the module never migrates. An unrecognized stored schema version fails
+Second, transactions are reentrant and only the outermost block ends one. One
+connection is shared by review, tenant, identity and session storage, so a
+transaction that was left open -- by a nested block committing early, or by a
+COMMIT that failed and was not cleaned up -- would break the next BEGIN on all
+four until the process restarted. :meth:`_unit_of_work` is the single place
+that opens, joins, commits or aborts, and a connection whose transaction state
+cannot be re-established is closed rather than handed to the next caller.
+
+Third, nothing here ever migrates. An unrecognized stored schema version fails
 closed with ``ReviewSchemaVersionError``; it is never upgraded, overwritten, or
 recovered by dropping tables. A review queue holds human decisions, so guessing
 is worse than refusing to open.
@@ -16,8 +24,16 @@ That applies in full to a schema 1.0.0 database, which this build can name but
 cannot serve: its review data predates tenant ownership and belongs to no
 organization or queue, so opening it would mean inventing an owner. It raises
 ``ReviewSchemaMigrationRequiredError`` -- a ``ReviewSchemaVersionError``, so
-every existing handler answers it unchanged -- and waits for an explicit
-operator migration. Nothing upgrades a database because an application started.
+every existing handler answers it unchanged -- and the message says plainly
+that no migration exists rather than naming one that does not.
+
+Note what :meth:`ReviewDatabase.initialize` does and does not do. It creates
+the schema only for a file with none of our tables. An existing database is
+version-checked **and** structurally checked: a 2.0.0 file whose
+resolution-sequence unique index is missing or still includes
+``review_case_id`` is refused. The file is not rewritten. ``verify-queue``
+can describe the same defect on a connection that is already open; it is not
+what makes startup fail closed. See ``review_persistence.schema``.
 """
 
 from __future__ import annotations
@@ -34,6 +50,7 @@ from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
     SCHEMA_META_TABLE,
     SCHEMA_STATEMENTS,
+    assert_resolution_sequence_index,
     assert_supported_schema_version,
 )
 
@@ -64,6 +81,13 @@ class ReviewDatabase:
         self._config = config
         self._clock = clock
         self._connection: sqlite3.Connection | None = None
+        # Nesting state for the reentrant transaction below. Depth counts the
+        # live blocks, ``_writable`` records what the outermost one opened, and
+        # ``_failed`` latches so an inner failure cannot be committed by an
+        # outer block that caught it.
+        self._depth = 0
+        self._writable = False
+        self._failed = False
 
     @property
     def config(self) -> ReviewPersistenceConfig:
@@ -111,15 +135,15 @@ class ReviewDatabase:
         IMMEDIATE takes the write lock up front, so a read-then-insert such as
         case registration cannot interleave with another writer between its two
         statements.
+
+        Reentrant: a nested call joins the transaction already in progress
+        instead of opening a second one. That is what lets the application
+        service hold one write lock across loading the authorization bundle,
+        asking the Sprint 08 domain, and writing the result -- without every
+        repository method having to know whether it was called first.
         """
-        connection = self.connect()
-        connection.execute("BEGIN IMMEDIATE")
-        try:
+        with self._unit_of_work(write=True) as connection:
             yield connection
-        except BaseException:
-            connection.execute("ROLLBACK")
-            raise
-        connection.execute("COMMIT")
 
     @contextmanager
     def read_transaction(self) -> Iterator[sqlite3.Connection]:
@@ -131,15 +155,124 @@ class ReviewDatabase:
         existed -- cases from after a write, context from before it -- and the
         authorization check built on it would be evaluating a graph nobody ever
         committed.
+
+        Reentrant in the same way as :meth:`transaction`. Nested inside a write
+        transaction it joins that one, so the read sees the uncommitted work of
+        the block that owns it -- which is exactly what a load-then-write unit
+        of work needs.
+        """
+        with self._unit_of_work(write=False) as connection:
+            yield connection
+
+    @contextmanager
+    def _unit_of_work(self, *, write: bool) -> Iterator[sqlite3.Connection]:
+        """The one place a transaction is opened, joined, committed or aborted.
+
+        Only the outermost block issues BEGIN and only it ends the transaction.
+        An inner block that raises latches ``_failed``, so an outer block which
+        swallowed that exception still cannot commit half a unit of work.
         """
         connection = self.connect()
-        connection.execute("BEGIN DEFERRED")
+
+        if self._depth:
+            if write and not self._writable:
+                # SQLite cannot promote a DEFERRED read snapshot to a write
+                # lock without risking a snapshot conflict, so this is refused
+                # rather than attempted. Callers that write must take the write
+                # transaction first.
+                raise ReviewPersistenceError(
+                    "A write transaction cannot be opened inside a read-only transaction. "
+                    "Open the write transaction first; SQLite cannot safely upgrade a "
+                    "DEFERRED snapshot to a write lock."
+                )
+            self._depth += 1
+            try:
+                yield connection
+            except BaseException:
+                self._failed = True
+                raise
+            finally:
+                self._depth -= 1
+            return
+
+        connection.execute("BEGIN IMMEDIATE" if write else "BEGIN DEFERRED")
+        self._depth = 1
+        self._writable = write
+        self._failed = False
         try:
             yield connection
         except BaseException:
-            connection.execute("ROLLBACK")
+            self._failed = True
             raise
-        connection.execute("COMMIT")
+        finally:
+            self._depth = 0
+            self._writable = False
+            failed = self._failed
+            self._failed = False
+            if failed:
+                self._abort(connection)
+            else:
+                self._commit(connection)
+
+        if failed:
+            # Reached only when an inner block failed and an outer block caught
+            # the exception, then exited normally. The transaction was rolled
+            # back above, so returning quietly here would report success for a
+            # unit of work that wrote nothing. Say so instead.
+            raise ReviewPersistenceError(
+                "A nested unit of work failed and its exception was suppressed, so the "
+                "whole transaction was rolled back. Nothing was written."
+            )
+
+    def _commit(self, connection: sqlite3.Connection) -> None:
+        """Commit, and never leave the connection mid-transaction if that fails.
+
+        COMMIT is a statement that can fail on its own -- SQLITE_BUSY, a full
+        disk, an I/O error -- and when it does the transaction is still open.
+        This connection is shared by review, tenant, identity and session
+        storage alike, so a transaction left open here would make the next
+        BEGIN on any of them fail with "cannot start a transaction within a
+        transaction" until the process restarted.
+
+        So a failed COMMIT is rolled back on a best-effort basis and the
+        original failure is re-raised unchanged. The commit error is what the
+        caller needs to see; a rollback problem must not replace it.
+        """
+        try:
+            connection.execute("COMMIT")
+        except BaseException:
+            self._abort(connection)
+            raise
+
+    def _abort(self, connection: sqlite3.Connection) -> None:
+        """End the transaction without raising anything of its own.
+
+        Called while another exception is propagating, so it swallows rollback
+        errors: replacing the caller's failure with a secondary one would hide
+        the reason the unit of work was abandoned.
+
+        A rollback can legitimately fail because SQLite already unwound the
+        transaction itself, which leaves the connection perfectly usable. That
+        is why the decision to discard is made from ``in_transaction`` rather
+        than from the rollback raising -- only a connection genuinely still
+        inside a transaction is unusable, and that one is closed so the next
+        :meth:`connect` opens a clean one.
+        """
+        try:
+            connection.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        if connection.in_transaction:
+            self._discard(connection)
+
+    def _discard(self, connection: sqlite3.Connection) -> None:
+        """Drop a connection whose transaction state is no longer known."""
+        if self._connection is connection:
+            self._connection = None
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
 
     def initialize(self) -> sqlite3.Connection:
         """Create the schema on a new database, or validate an existing one."""
@@ -148,6 +281,7 @@ class ReviewDatabase:
 
         if SCHEMA_META_TABLE in present:
             assert_supported_schema_version(self._read_schema_version(connection))
+            assert_resolution_sequence_index(connection)
             return connection
 
         if present:
@@ -198,6 +332,12 @@ class ReviewDatabase:
         if self._connection is not None:
             self._connection.close()
             self._connection = None
+        # Nesting state belongs to the connection that is now gone. Leaving it
+        # set would make the next transaction on a reopened connection believe
+        # it was nested inside one that no longer exists.
+        self._depth = 0
+        self._writable = False
+        self._failed = False
 
     def __enter__(self) -> ReviewDatabase:
         self.initialize()

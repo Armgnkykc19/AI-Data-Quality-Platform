@@ -630,9 +630,7 @@ describe('a recorded decision', () => {
         within(screen.getByRole('region', { name: 'Event history' })).getByText('Resolved as Match'),
       ).toBeInTheDocument();
     });
-    // The response's own event carries `event_id: null`; nothing was inserted
-    // from it, and no placeholder or invented id reached the timeline.
-    expect(matchResolveResponse.event.event_id).toBeNull();
+    // History is rebuilt from GET /events, not by inserting the POST event.
     const timeline = within(screen.getByRole('region', { name: 'Event history' }));
     expect(timeline.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.queryByText(/unknown event/i)).toBeNull();
@@ -1007,5 +1005,88 @@ describe('phase boundary', () => {
 
     expect(http.callCount()).toBe(settled);
     expect(resolveCalls()).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A7: confirmation-open lock, and remount while a mutation is in flight
+// ---------------------------------------------------------------------------
+
+const PENDING_CASE_B_ID = 'RC-0000000000000009';
+const pendingCaseBDetail = {
+  ...pendingCaseDetail,
+  review_case_id: PENDING_CASE_B_ID,
+  record_a_id: 'REC-A-0009',
+  record_b_id: 'REC-B-0009',
+} satisfies ReviewCaseDetail;
+
+describe('decision controls while a confirmation is open', () => {
+  it.each(['Match', 'No match', 'Defer'] as const)(
+    'disables the other decisions when %s confirmation is open',
+    async (name) => {
+      const { user } = await renderPending();
+
+      await user.click(decisionButton(name));
+      expect(screen.getByRole('region', { name: 'Confirm this decision' })).toBeInTheDocument();
+
+      expect(decisionButton('Match')).toBeDisabled();
+      expect(decisionButton('No match')).toBeDisabled();
+      expect(decisionButton('Defer')).toBeDisabled();
+
+      await user.click(decisionButton('Match'));
+      await user.click(decisionButton('No match'));
+      await user.click(decisionButton('Defer'));
+
+      expect(resolveCalls()).toHaveLength(0);
+      expect(
+        within(screen.getByRole('region', { name: 'Confirm this decision' })).getByText(name),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    },
+  );
+});
+
+describe('an in-flight resolution across a case switch', () => {
+  it('does not auto-retry after remount; a second POST needs a new confirmation', async () => {
+    const { user } = await renderPending();
+    holdResolve();
+
+    await user.click(decisionButton('Match'));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(screen.getByText('Recording decision…')).toBeInTheDocument();
+    });
+    expect(resolveCalls()).toHaveLength(1);
+
+    serve(detailUrl(PENDING_CASE_B_ID), pendingCaseBDetail);
+    serve(eventsUrl(PENDING_CASE_B_ID), [caseCreatedEvent]);
+    serve(suggestionsUrl(PENDING_CASE_B_ID), [advisorySuggestion]);
+    select(PENDING_CASE_B_ID);
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: 'Human decision' })).toBeInTheDocument();
+    });
+    expect(resolveCalls()).toHaveLength(1);
+
+    serve(detailUrl(PENDING_CASE_ID), pendingCaseDetail);
+    serve(eventsUrl(PENDING_CASE_ID), [caseCreatedEvent]);
+    serve(suggestionsUrl(PENDING_CASE_ID), [advisorySuggestion]);
+    select(PENDING_CASE_ID);
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: 'Human decision' })).toBeInTheDocument();
+    });
+    // The panel is keyed by case id, so the component-local in-flight ref is
+    // gone. That is not a durable-write guarantee; the backend CAS is.
+    expect(resolveCalls()).toHaveLength(1);
+    expect(screen.queryByText('Recording decision…')).toBeNull();
+
+    await user.click(decisionButton('No match'));
+    await user.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => {
+      expect(resolveCalls()).toHaveLength(2);
+    });
+    expect(resolveBody(1)).toMatchObject({
+      decision: 'NO_MATCH',
+      expected_version: 1,
+    });
   });
 });

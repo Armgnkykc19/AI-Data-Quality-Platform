@@ -116,6 +116,34 @@ def build_manifest(
     }
 
 
+def generation_fingerprint(
+    *,
+    version: str,
+    seed: int,
+    record_count: int,
+    splits: dict[str, Any],
+    sources: dict[str, Any],
+    hard_cases: dict[str, Any],
+    canonical_fields: list[str],
+) -> str:
+    """Stable hash of the generator inputs that must match a CI dataset.
+
+    ``generated_at`` is deliberately excluded so two builds of the same config
+    share a fingerprint. File content hashes live elsewhere in the manifest.
+    """
+    payload = {
+        "canonical_fields": list(canonical_fields),
+        "hard_cases": hard_cases,
+        "record_count": record_count,
+        "seed": seed,
+        "sources": sources,
+        "splits": splits,
+        "version": version,
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def write_manifest(path: Path, manifest: dict[str, Any]) -> None:
     write_json(path, manifest)
 

@@ -315,18 +315,20 @@ def test_a_transitively_contradicted_match_is_refused_and_writes_nothing(
     """
     resolution = make_triangle_review_resolution(("rec-a", "rec-b", "rec-c"))
     state = generate_review_cases(resolution, config=resolution_config)
-    workflow = ReviewWorkflow(state)
     ac_case = next(
         case for case in state.cases if case.pair == RecordPair.ordered("rec-a", "rec-c")
     )
-    register(
-        repository,
-        workflow.resolve_case(
-            ac_case.review_case_id,
-            decision=HumanReviewDecision.NO_MATCH,
-            reviewer_id="reviewer-1",
-        ),
-        resolution,
+    register(repository, state, resolution)
+
+    # The prior decision is recorded through the service, which is now the only
+    # way a stored case becomes decided: registration refuses a resolved case.
+    # That makes the whole test run on the authoritative path rather than
+    # seeding the constraint it then relies on.
+    service.resolve_case(
+        ac_case.review_case_id,
+        decision=HumanReviewDecision.NO_MATCH,
+        reviewer_id="reviewer-1",
+        expected_version=1,
     )
 
     ab_case = next(

@@ -13,9 +13,11 @@ from human_review.models import HumanReviewDecision, ReviewCase, ReviewWorkflowS
 from human_review.reporting import resolution_snapshot
 from human_review.workflow import ReviewWorkflow
 from identity.models import MembershipRole, Organization, OrganizationMembership, User
+from review_application.models import PersistedCase, ReviewEvent
 from review_application.queues import ReviewQueue
 from review_persistence.config import ReviewPersistenceConfig
 from review_persistence.sqlite.database import ReviewDatabase, open_review_database
+from review_persistence.sqlite.mapper import case_payload_json
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
 from review_persistence.sqlite.tenant_repository import SqliteTenantRepository
 from tests.human_review.conftest import (
@@ -308,6 +310,120 @@ def resolved_match_state(
         reviewer_id="reviewer-1",
         **match_authorization_kwargs(resolution, resolution_config),
     )
+
+
+@pytest.fixture
+def stored_resolved_match(
+    repository: SqliteReviewCaseRepository,
+    review_state: ReviewWorkflowState,
+    resolved_match_state: ReviewWorkflowState,
+    review_case: ReviewCase,
+    resolution: ResolutionResult,
+) -> PersistedCase:
+    """The fixture queue with one stored MATCH, reached through apply_resolution.
+
+    Version is 2, not 1: the case was registered PENDING and then transitioned,
+    which is one version bump. Tests that assert on the version are asserting
+    the real shape of a decided row rather than the shape a direct insert used
+    to produce.
+    """
+    return seed_resolved_case(
+        repository,
+        pending_state=review_state,
+        resolved_state=resolved_match_state,
+        review_case_id=review_case.review_case_id,
+        resolution=resolution,
+    )
+
+
+def seed_resolved_case(
+    repository: SqliteReviewCaseRepository,
+    *,
+    pending_state: ReviewWorkflowState,
+    resolved_state: ReviewWorkflowState,
+    review_case_id: str,
+    resolution: ResolutionResult,
+    entity_resolution_config_path: str | None = None,
+    occurred_at_utc: str = "2026-09-12T08:00:00Z",
+) -> PersistedCase:
+    """Store a decided case the only way the system allows one to become decided.
+
+    Before Sprint 14 Phase A these tests registered an already-resolved
+    ``ReviewWorkflowState`` directly, which was convenient and was also the
+    bypass ``_assert_registrable`` now closes: registration inserts at version 1
+    with no event, so a resolved case could enter storage without
+    ``apply_resolution`` and without ever passing Sprint 08 authorization.
+
+    So the seeding does what production does. The PENDING workflow is
+    registered, and the decision the domain produced is then applied through
+    ``apply_resolution`` with the event projected from its own audit entry. The
+    stored result is the same resolved case these tests always wanted, reached
+    the only way anything can reach it -- which makes the fixture proof that the
+    authoritative path works rather than a way around it.
+    """
+    repository.register_workflow(
+        pending_state,
+        entity_records=resolution.records,
+        resolution_snapshot=resolution_snapshot(resolution),
+        entity_resolution_config_path=entity_resolution_config_path,
+    )
+    resolved_case = resolved_state.case_by_id(review_case_id)
+    assert resolved_case is not None, review_case_id
+    entry = next(
+        item for item in resolved_state.audit_trail if item.review_case_id == review_case_id
+    )
+    stored = repository.get_case(review_case_id)
+    return repository.apply_resolution(
+        resolved_case,
+        expected_version=stored.version,
+        event=ReviewEvent.from_audit_entry(entry, occurred_at_utc=occurred_at_utc),
+        now_utc=occurred_at_utc,
+    )
+
+
+def seed_eventless_resolved_case(
+    repository: SqliteReviewCaseRepository,
+    database: ReviewDatabase,
+    *,
+    pending_state: ReviewWorkflowState,
+    resolved_state: ReviewWorkflowState,
+    review_case_id: str,
+    resolution: ResolutionResult,
+    entity_resolution_config_path: str | None = None,
+) -> None:
+    """Model a pre-event-table database: a resolved case with no history row.
+
+    Written with direct SQL deliberately. No repository primitive can produce
+    this state and none should -- registration refuses a resolved case, and
+    ``apply_resolution`` always writes the event in the same transaction -- so
+    the only databases that contain it are ones written before the event table
+    existed. ``reconstruct_history`` still has to read those, which is the
+    behaviour these tests cover.
+
+    Same out-of-band pattern as ``set_membership_role``, for the same reason:
+    adding a production write path so that a test has something to call is how
+    an unnecessary bypass ships. Doing it in SQL also keeps the test honest
+    about what it is -- a legacy shape, not a supported operation.
+    """
+    repository.register_workflow(
+        pending_state,
+        entity_records=resolution.records,
+        resolution_snapshot=resolution_snapshot(resolution),
+        entity_resolution_config_path=entity_resolution_config_path,
+    )
+    resolved_case = resolved_state.case_by_id(review_case_id)
+    assert resolved_case is not None, review_case_id
+    database.connect().execute(
+        "UPDATE review_cases SET status = ?, version = version + 1, case_payload_json = ? "
+        "WHERE review_queue_id = ? AND review_case_id = ?",
+        (
+            resolved_case.status.value,
+            case_payload_json(resolved_case),
+            repository.review_queue_id,
+            review_case_id,
+        ),
+    )
+    assert repository.list_events(review_case_id) == ()
 
 
 def conflicting_bridge_resolution() -> ResolutionResult:

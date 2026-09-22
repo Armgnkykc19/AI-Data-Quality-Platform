@@ -35,7 +35,7 @@ from review_persistence.sqlite.context_mapper import (
 )
 from review_persistence.sqlite.database import ReviewDatabase
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
-from tests.review_persistence.conftest import FrozenClock
+from tests.review_persistence.conftest import FrozenClock, seed_resolved_case
 
 CONTEXT_PATH = "configs/entity_resolution.yaml"
 
@@ -429,18 +429,25 @@ def test_resolved_case_is_not_reset_by_re_registering_the_pending_workflow(
 
     If re-running it overwrote storage, a recorded human MATCH would vanish.
     """
-    stored = _register(repository, resolved_match_state, resolution, snapshot)
-    assert stored[0].status is ReviewStatus.MATCH
+    stored = seed_resolved_case(
+        repository,
+        pending_state=review_state,
+        resolved_state=resolved_match_state,
+        review_case_id=review_state.cases[0].review_case_id,
+        resolution=resolution,
+        entity_resolution_config_path=CONTEXT_PATH,
+    )
+    assert stored.status is ReviewStatus.MATCH
 
     clock.advance(7200)
     returned = _register(repository, review_state, resolution, snapshot)
 
     assert returned[0].status is ReviewStatus.MATCH
-    assert returned[0].version == stored[0].version == 1
-    assert returned[0].created_at_utc == stored[0].created_at_utc
-    assert returned[0].updated_at_utc == stored[0].updated_at_utc
+    assert returned[0].version == stored.version
+    assert returned[0].created_at_utc == stored.created_at_utc
+    assert returned[0].updated_at_utc == stored.updated_at_utc
 
-    reloaded = repository.get_case(stored[0].review_case_id)
+    reloaded = repository.get_case(stored.review_case_id)
     assert reloaded.case == resolved_match_state.cases[0]
     assert reloaded.case.resolution is not None
 
@@ -564,17 +571,31 @@ def test_context_conflict_leaves_nothing_partially_changed(
 
 def test_bundle_carries_every_case_including_resolved_ones(
     repository: SqliteReviewCaseRepository,
+    review_state: ReviewWorkflowState,
     resolved_match_state: ReviewWorkflowState,
     resolution: ResolutionResult,
     snapshot: dict[str, Any],
 ) -> None:
-    _register(repository, resolved_match_state, resolution, snapshot)
+    """A resolved case stays in the bundle, because it still constrains a merge.
+
+    The version is 2 rather than 1: the case was registered PENDING and then
+    transitioned through ``apply_resolution``, which is the only way a stored
+    case becomes decided.
+    """
+    seed_resolved_case(
+        repository,
+        pending_state=review_state,
+        resolved_state=resolved_match_state,
+        review_case_id=review_state.cases[0].review_case_id,
+        resolution=resolution,
+        entity_resolution_config_path=CONTEXT_PATH,
+    )
 
     bundle = repository.load_workflow_bundle()
 
     assert bundle.cases() == resolved_match_state.cases
     assert any(case.status is ReviewStatus.MATCH for case in bundle.cases())
-    assert set(bundle.versions_by_case_id().values()) == {1}
+    assert set(bundle.versions_by_case_id().values()) == {2}
 
 
 def test_bundle_carries_records_and_snapshot(

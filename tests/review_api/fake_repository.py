@@ -58,12 +58,29 @@ class FakeReviewCaseRepository:
                 return persisted
         raise ReviewCaseNotFoundError(f"Review case not found: {review_case_id}")
 
-    def list_cases(self, *, status: ReviewStatus | None = None) -> tuple[PersistedCase, ...]:
+    def list_cases(
+        self,
+        *,
+        status: ReviewStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[PersistedCase, ...]:
         self._maybe_fail()
         self.list_cases_calls.append(status)
+        matching = (
+            self._cases
+            if status is None
+            else tuple(persisted for persisted in self._cases if persisted.status == status)
+        )
+        if limit is None:
+            return matching
+        return matching[offset : offset + limit]
+
+    def count_cases(self, *, status: ReviewStatus | None = None) -> int:
+        self._maybe_fail()
         if status is None:
-            return self._cases
-        return tuple(persisted for persisted in self._cases if persisted.status == status)
+            return len(self._cases)
+        return sum(1 for persisted in self._cases if persisted.status == status)
 
     def list_events(self, review_case_id: str) -> tuple[ReviewEvent, ...]:
         self._maybe_fail()

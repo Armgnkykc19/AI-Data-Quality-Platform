@@ -127,7 +127,7 @@ class ReviewCaseSummary(ApiResponseModel):
     where the case stands, and carry the version a later resolution will have to
     echo back. Evidence is deliberately absent: it belongs to the decision
     screen, and shipping it for every row would put the whole queue's
-    customer-derived detail into one unauthenticated response.
+    customer-derived detail into one response.
     """
 
     review_case_id: str
@@ -524,12 +524,10 @@ def to_resolution_response(result: ReviewResolutionResult) -> ResolveReviewCaseR
     published: the workflow state is authorization material, and the audit entry
     is already projected, field by field, through the event below.
 
-    One honest wart. ``result.event`` is the event the service handed to
-    storage, so its ``event_id`` is None: the id is assigned by the database
-    during the write and ``apply_resolution`` returns only the updated case.
-    ``ReviewEventRead.event_id`` is already optional, so this stays inside the
-    published contract, and a client that needs stable ids reads them from the
-    history endpoint.
+    ``result.event`` is the history row storage just wrote, so ``event_id`` is
+    the durable identifier of that row. ``ReviewEventRead.event_id`` remains
+    optional for events that have not been stored, which keeps older clients
+    compatible.
     """
     return ResolveReviewCaseResponse(
         case=to_case_detail(result.persisted_case),

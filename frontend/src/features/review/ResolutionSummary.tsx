@@ -10,10 +10,9 @@ import styles from './review.module.css';
  * unresolved case never looks like a resolved one with blanks.
  *
  * `reviewer_id` is labelled "Reviewer label" and never "Reviewer", "User" or
- * "Account". Sprint 11 has no authentication: the value is whatever string a
- * client sent, recorded verbatim into an append-only audit row. Presenting it
- * as an identity would attribute a decision to a person the system never
- * verified. Sprint 13 owns that boundary.
+ * "Account". The API records the authenticated user id on a successful
+ * resolve. This panel still displays the stored field as a label rather than
+ * as a signed-in account, because this local UI does not authenticate.
  *
  * `human_decision` uses the decision vocabulary, which is why `DEFER` can
  * appear here while the case status beside it reads `DEFERRED`. The spelling

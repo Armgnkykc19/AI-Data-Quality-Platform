@@ -7,13 +7,13 @@ is allowed -- prior NO_MATCH constraints, transitive component membership,
 severe identity conflicts -- stays in ``human_review``; none of it is repeated,
 re-implemented, or approximated here.
 
-Two properties are worth stating plainly, because the whole design follows from
-them.
+Three properties are worth stating plainly, because the whole design follows
+from them.
 
-First, no database write happens before ``ReviewWorkflow.resolve_case`` returns.
-A refusal is raised out of the domain, and the transaction that would have
-written was never opened. There is no path where a rejected decision leaves a
-version bump, a timestamp change, or a history row behind.
+First, no durable write happens before ``ReviewWorkflow.resolve_case`` returns.
+A refusal is raised out of the domain, which abandons the unit of work before
+``apply_resolution`` is ever called. There is no path where a rejected decision
+leaves a version bump, a timestamp change, or a history row behind.
 
 The service also holds no persistence knowledge: it imports nothing from
 ``review_persistence``, names no table, and does not know the database schema
@@ -25,6 +25,33 @@ Sprint 08 boundary check projects a connected component across every AUTO_MATCH
 edge and every human decision, so a MATCH that is safe in isolation can be
 unsafe in context. Loading a single case would silently weaken it, which is why
 ``load_workflow_bundle`` is the only entry point used here.
+
+Third -- and this is what Sprint 14 Phase A added -- that authorization is
+performed and acted upon inside **one serialized write scope**. The reason is
+the second property: if authorization is a statement about the whole queue,
+then proving the one target row has not moved proves almost nothing about it.
+
+Consider two reviewers holding the same bundle, resolving two different PENDING
+cases that sit in one identity component. One records MATCH, the other
+NO_MATCH. Each target row is at the version its reviewer read, so each
+conditional update succeeds -- and the queue is left in a state the domain
+would have refused had it been asked once, in order, because the MATCH now
+transitively violates the NO_MATCH. Nothing was overwritten and no version was
+lost; the two decisions were simply never evaluated against each other.
+
+``expected_version`` cannot close that, and neither can a stricter version of
+it: the gap is not "did this row change" but "was the graph still this graph".
+``unit_of_work`` closes it by construction -- the bundle is read under the write
+lock and the resolution commits before that lock is released, so there is no
+interval in which a second writer could authorize against a state this one is
+about to invalidate. The second writer does not race and lose; it waits, reads
+the first decision, and is refused by the domain on the merits.
+
+This is also why the queue-global ``resolution_sequence`` uniqueness in
+``review_persistence.schema`` is a backstop rather than the control. The
+sequence is taken from the bundle, so inside one serialized scope two writers
+cannot arrive at the same ordinal. The index is what makes that true of the
+*database* rather than only of this file.
 """
 
 from __future__ import annotations
@@ -108,50 +135,90 @@ class ReviewQueueService:
 
         ``expected_version`` is the version the reviewer had in front of them.
         It is checked twice: here, before the domain is asked anything, and
-        again inside the storage transaction as a conditional update. The first
-        check turns the common case into a clean refusal; the second is what
-        actually makes concurrent writers safe.
+        again inside the storage write as a conditional update. Both checks
+        concern the *one* case being written -- they are lost-update protection,
+        and neither says anything about the rest of the queue.
+
+        What covers the rest of the queue is the unit of work. Everything from
+        loading the bundle to committing the resolution happens inside one
+        serialized write scope, so the queue state Sprint 08 authorized against
+        is the state the write lands on. See the module docstring for why a
+        per-case version cannot substitute for that.
+
+        This scope never calls a semantic provider, LLM, or other network
+        client. Authorization is the in-process Sprint 08 domain against the
+        loaded bundle. A live suggestion path is a different command and is
+        not taken here.
 
         Raises ``ReviewConflictError`` if the case moved, and propagates the
         Sprint 08 errors -- ``HumanReviewContradictionError``,
         ``HumanReviewAuthorizationError``,
         ``HumanReviewAuthorizationContextError``,
         ``InvalidReviewTransitionError`` -- unchanged and unwrapped, so a caller
-        can still tell a refused decision from a storage failure.
+        can still tell a refused decision from a storage failure. Every one of
+        them leaves the scope by raising, which abandons it: a refusal writes
+        nothing, exactly as before.
         """
-        bundle = self._repository.load_workflow_bundle()
-        persisted = self._locate(bundle, review_case_id)
-        self._assert_not_stale(persisted, expected_version)
+        with self._repository.unit_of_work():
+            bundle = self._repository.load_workflow_bundle()
+            persisted = self._locate(bundle, review_case_id)
+            self._assert_not_stale(persisted, expected_version)
 
-        updated_state = self._resolve_through_domain(
-            bundle,
-            review_case_id,
-            decision=decision,
-            reviewer_id=reviewer_id,
-        )
-
-        audit_entry = self._appended_audit_entry(updated_state, review_case_id)
-        updated_case = updated_state.case_by_id(review_case_id)
-        if updated_case is None:  # pragma: no cover - the workflow just produced it
-            raise ReviewEventIntegrityError(
-                f"Workflow returned no case for {review_case_id} after resolving it."
+            updated_state = self._resolve_through_domain(
+                bundle,
+                review_case_id,
+                decision=decision,
+                reviewer_id=reviewer_id,
             )
 
-        now = utc_timestamp(self._clock)
-        # No schema version: the storage layer stamps the one it is writing.
-        event = ReviewEvent.from_audit_entry(audit_entry, occurred_at_utc=now)
-        stored = self._repository.apply_resolution(
-            updated_case,
-            expected_version=expected_version,
-            event=event,
-            now_utc=now,
-        )
+            audit_entry = self._appended_audit_entry(updated_state, review_case_id)
+            updated_case = updated_state.case_by_id(review_case_id)
+            if updated_case is None:  # pragma: no cover - the workflow just produced it
+                raise ReviewEventIntegrityError(
+                    f"Workflow returned no case for {review_case_id} after resolving it."
+                )
+
+            now = utc_timestamp(self._clock)
+            # No schema version: the storage layer stamps the one it is writing.
+            event = ReviewEvent.from_audit_entry(audit_entry, occurred_at_utc=now)
+            stored = self._repository.apply_resolution(
+                updated_case,
+                expected_version=expected_version,
+                event=event,
+                now_utc=now,
+            )
+            event = self._require_persisted_resolution_event(
+                review_case_id,
+                written=event,
+            )
+
         return ReviewResolutionResult(
             persisted_case=stored,
             audit_entry=audit_entry,
             event=event,
             workflow_state=updated_state,
         )
+
+    def _require_persisted_resolution_event(
+        self,
+        review_case_id: str,
+        *,
+        written: ReviewEvent,
+    ) -> ReviewEvent:
+        """Return the history row just written, including its durable event id."""
+        matches = [
+            item
+            for item in self._repository.list_events(review_case_id)
+            if item.is_resolution
+            and item.resolution_sequence == written.resolution_sequence
+            and item.event_type == written.event_type
+        ]
+        if len(matches) != 1 or matches[0].event_id is None:
+            raise ReviewEventIntegrityError(
+                f"Review case {review_case_id} did not yield a durable resolution "
+                "event after apply_resolution. The unit of work will be abandoned."
+            )
+        return matches[0]
 
     # -- domain orchestration ----------------------------------------------
 

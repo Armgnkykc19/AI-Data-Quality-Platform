@@ -33,11 +33,11 @@ import styles from './resolution.module.css';
  * `expected_version` exists to prevent.
  *
  * **Convergence is always a GET.** A success is not painted into local state,
- * and the POST response is not treated as history -- its event carries
- * `event_id: null` by construction. After anything that may have changed the
- * queue, or that leaves the client unable to say whether it did, the panel
- * asks its parent to re-read the authoritative detail, the event history and
- * the queue, and it offers no further decision until those reads settle.
+ * and the POST response is not treated as history. After anything that may
+ * have changed the queue, or that leaves the client unable to say whether it
+ * did, the panel asks its parent to re-read the authoritative detail, the
+ * event history and the queue, and it offers no further decision until those
+ * reads settle.
  *
  * **Nothing is ever resent.** There is no retry button, no timeout, no
  * backoff and no automatic second POST on any path -- least of all the
@@ -99,9 +99,23 @@ export function ResolutionPanel({
   const reconcileFailed =
     settled?.awaitingReads === true && !isReadingCase && caseReadFailed;
 
+  // Set when a confirmation is cancelled, consumed by the effect below. The
+  // focus move cannot happen in the cancel handler any more: the decision
+  // buttons are disabled while a confirmation is open, so at the moment the
+  // handler runs the button it wants is still disabled in the DOM and
+  // `.focus()` on a disabled button does nothing. Deferring to the effect means
+  // the button is enabled again by the time focus is asked for.
+  const focusAfterCancel = useRef<HumanReviewDecision | null>(null);
+
   useEffect(() => {
     if (activeIntent !== null) {
       confirmationRef.current?.focus();
+      return;
+    }
+    const decision = focusAfterCancel.current;
+    if (decision !== null) {
+      focusAfterCancel.current = null;
+      decisionRefs.current.get(decision)?.focus();
     }
   }, [activeIntent]);
 
@@ -138,13 +152,12 @@ export function ResolutionPanel({
   };
 
   const handleCancel = () => {
-    const decision = capturedIntent?.decision;
+    // Recorded rather than acted on, because the button is still disabled at
+    // this instant. The effect above restores focus once the re-render has
+    // re-enabled it, so a keyboard reviewer is still returned to the decision
+    // they opened instead of being dropped at the top of the document.
+    focusAfterCancel.current = capturedIntent?.decision ?? null;
     setState({ kind: 'choosing' });
-    if (decision !== undefined) {
-      // The decision buttons stay mounted and enabled while a confirmation is
-      // open, so focus can go straight back to the one that opened it.
-      decisionRefs.current.get(decision)?.focus();
-    }
   };
 
   const handleOutcome = (outcome: ResolveOutcome) => {
@@ -225,7 +238,13 @@ export function ResolutionPanel({
             registerDecisionRef={(decision, node) => {
               decisionRefs.current.set(decision, node);
             }}
-            decisionsDisabled={busy}
+            // Disabled while a confirmation is open, not only while a request
+            // is in flight. An open confirmation is already a captured
+            // decision; letting a second one be started behind it means the
+            // reviewer is looking at a confirmation for one decision while the
+            // panel holds the intent for another. Cancel returns focus to the
+            // button that opened it, so the way back is unchanged.
+            decisionsDisabled={busy || activeIntent !== null}
             // Frozen while a confirmation is open: the label shown on the
             // confirmation is the one that will be sent, and letting it drift
             // underneath would make the two disagree.

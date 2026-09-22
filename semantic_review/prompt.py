@@ -1,3 +1,37 @@
+"""The advisory prompt, and an explicit statement of what it sends.
+
+Two kinds of minimization get confused, so they are named separately here.
+
+**Internal state is minimized, and that is what the surrounding sprints mean
+when they say "data minimization".** The prompt carries no threshold, no
+``person_id``, no oracle label, no ground truth, no split or holdout
+information, and no source name or path. The instructions below also forbid the
+model from mentioning any of them.
+
+**Customer identity values are not minimized.** When semantic review is
+enabled, ``_record_block`` sends the selected record fields as raw values --
+names, email addresses, phone numbers, companies, addresses -- for both records
+of the reviewed pair, to whichever external provider is configured. Bounding
+and truncating them limits volume, not sensitivity. Not persisting the model's
+explanation (see ``review_persistence.sqlite.semantic_mapper``) limits what is
+*stored*, and says nothing about what was *transmitted*.
+
+That is the honest description of current behaviour, and Sprint 14 Phase A
+changed none of it: semantic review remains **disabled by default** and this
+phase makes no live provider call. Before it is enabled anywhere, the following
+have to be decided rather than inherited -- data classification for these
+fields, an explicit field allowlist, provider retention, a DPA, regional
+processing and data residency, whether redaction or pseudonymization is
+feasible without destroying the identity signal the review exists to judge, and
+a logging and error policy that keeps these values out of logs and exception
+text. None of those decisions is encoded here.
+
+The prompt-injection boundary is a different concern and is handled below:
+trusted deterministic evidence and untrusted record data are delimited
+separately, and the model is told that record fields are data rather than
+instructions.
+"""
+
 from __future__ import annotations
 
 import hashlib

@@ -1,21 +1,23 @@
 /**
  * Build, local runtime, and test configuration for the reviewer UI.
  *
- * The proxy below is the whole reason this file matters to Sprint 12's
- * architecture. The Sprint 11 API installs no CORS middleware, deliberately:
- * it has no authentication, no caller identity and no tenant isolation, so
- * there is no origin it could safely trust, and `POST .../resolve` is an
- * authoritative write over customer-derived evidence.
+ * The proxy below is the whole reason this file matters to the frontend
+ * architecture. The review API installs no CORS middleware, deliberately:
+ * authenticated state-changing requests require an exact allowed Origin, and
+ * there is no origin this local UI could safely advertise as a cross-origin
+ * caller. `POST .../resolve` is an authoritative write.
  *
  * A browser talking straight to 127.0.0.1:8000 from a page served on :5173
  * would be cross-origin and blocked. Rather than weaken the API, the dev and
  * preview servers proxy `/api` and `/health` to it. The browser therefore only
- * ever issues same-origin requests, no preflight happens, no `Origin` header
- * decides anything, and Sprint 11 keeps its no-CORS boundary untouched.
+ * ever issues same-origin requests, no preflight happens, and the API keeps
+ * its no-CORS boundary untouched.
  *
  * That is also why every request path in `src/api/client.ts` is relative and
  * why there is no `VITE_API_URL`: an absolute URL in browser source would
  * bypass the proxy and reintroduce the cross-origin problem this solves.
+ *
+ * This UI still does not implement login or tenant selection. The API does.
  */
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
@@ -24,9 +26,9 @@ import react from '@vitejs/plugin-react';
  *  any non-loopback host, so a non-loopback target here could never be right. */
 const API_ORIGIN = 'http://127.0.0.1:8000';
 
-/** Loopback, never 0.0.0.0. Vite's proxy would otherwise republish an
- *  unauthenticated decision endpoint to the local network, which is exactly
- *  what `review_api.__main__.is_loopback` exists to prevent on the API side. */
+/** Loopback, never 0.0.0.0. Vite's proxy would otherwise republish the
+ *  decision endpoint to the local network, which is exactly what
+ *  `review_api.__main__.is_loopback` exists to prevent on the API side. */
 const LOOPBACK_HOST = '127.0.0.1';
 
 const DEV_PORT = 5173;

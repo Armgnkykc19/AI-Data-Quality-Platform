@@ -344,7 +344,7 @@
       },
       "ReviewCaseSummary": {
         "additionalProperties": false,
-        "description": "One row of the reviewer's queue.\n\nEnough to identify the pair, read the machine's verdict and confidence, see\nwhere the case stands, and carry the version a later resolution will have to\necho back. Evidence is deliberately absent: it belongs to the decision\nscreen, and shipping it for every row would put the whole queue's\ncustomer-derived detail into one unauthenticated response.",
+        "description": "One row of the reviewer's queue.\n\nEnough to identify the pair, read the machine's verdict and confidence, see\nwhere the case stands, and carry the version a later resolution will have to\necho back. Evidence is deliberately absent: it belongs to the decision\nscreen, and shipping it for every row would put the whole queue's\ncustomer-derived detail into one response.",
         "properties": {
           "created_at_utc": {
             "title": "Created At Utc",
@@ -867,7 +867,7 @@
     },
     "/api/v1/organizations/{organization_id}/review-queues/{review_queue_id}/review-cases": {
       "get": {
-        "description": "One page of this queue, optionally filtered by status.\n\n``status`` is the ``ReviewStatus`` enum, so FastAPI matches it exactly:\n``PENDING`` is accepted and ``pending`` is a 422. Coercing case would mean\nthis layer deciding what a status token means, and there is already exactly\none answer to that in ``human_review.models``.\n\nFiltering is the repository's job and slicing is this route's. ``total``\ncounts the filtered set before the slice, so an offset past the end returns\nan empty page that still says how many cases matched -- and every number\nhere counts only this queue, because the repository cannot see another.",
+        "description": "One page of this queue, optionally filtered by status.\n\n``status`` is the ``ReviewStatus`` enum, so FastAPI matches it exactly:\n``PENDING`` is accepted and ``pending`` is a 422. Coercing case would mean\nthis layer deciding what a status token means, and there is already exactly\none answer to that in ``human_review.models``.\n\nFiltering, ordering, counting and the ``limit``/``offset`` window are all\ndelegated to the queue-scoped repository and evaluated in SQLite. This\nroute validates the pagination parameters, forwards them, and shapes the\nresponse; it holds no page of its own to slice. ``total`` counts the\nfiltered set independently of the window, so an offset past the end\nreturns an empty page that still says how many cases matched -- and every\nnumber here counts only this queue, because the repository cannot see\nanother.",
         "operationId": "list_review_cases_api_v1_organizations__organization_id__review_queues__review_queue_id__review_cases_get",
         "parameters": [
           {

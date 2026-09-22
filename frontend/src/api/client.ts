@@ -7,10 +7,12 @@
  * **Every path is relative.** There is no base URL, no host, no port, and no
  * `VITE_API_URL`. The browser always issues same-origin requests, and where
  * they actually go is the Vite proxy's business (see `vite.config.ts`). That
- * is what lets Sprint 11 keep its deliberate no-CORS boundary: an absolute
+ * is what lets the project keep its deliberate no-CORS boundary: an absolute
  * `http://127.0.0.1:8000/...` here would make every request cross-origin and
- * would be blocked -- or, worse, would motivate adding CORS to an
- * unauthenticated API that publishes customer-derived evidence.
+ * would be blocked -- or, worse, would motivate adding CORS to an API that
+ * serves customer-derived evidence. Since Sprint 13 that API also
+ * authenticates and authorizes every review request, and a cross-origin
+ * surface is exactly where its session cookie should not be exposed.
  *
  * **Nothing is ever retried.** Not a 503, not a network failure, and above all
  * not `POST .../resolve`. Resolution is not idempotent, and a retry would
@@ -209,10 +211,10 @@ export function getReviewEvents(
 /**
  * `GET /api/v1/review-cases/{id}/semantic-suggestions`. A bare array.
  *
- * Reading only. Sprint 11 exposes no live semantic generation over HTTP at
- * all, so there is no counterpart to this function and none may be added: it
- * would put a provider call and a spend decision in an unauthenticated
- * request path.
+ * Reading only. The API exposes no live semantic generation over HTTP at all,
+ * so there is no counterpart to this function and none may be added: it would
+ * put a provider call and a spend decision in a reviewer-triggered request
+ * path.
  */
 export function getSemanticSuggestions(
   reviewCaseId: string,

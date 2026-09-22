@@ -31,7 +31,11 @@ import sqlite3
 from collections.abc import Mapping
 from typing import Any
 
-from identity.errors import DuplicateIdentityError, IdentityNotFoundError
+from identity.errors import (
+    DuplicateIdentityError,
+    IdentityNotFoundError,
+    OrganizationNotActiveError,
+)
 from identity.models import (
     MembershipRole,
     Organization,
@@ -330,13 +334,7 @@ class SqliteTenantRepository:
             )
         )
         with self._database.transaction() as connection:
-            self._assert_exists(
-                connection,
-                table=ORGANIZATIONS_TABLE,
-                column="organization_id",
-                value=stored.organization_id,
-                label="Organization",
-            )
+            self._assert_organization_active(connection, stored.organization_id)
             self._assert_exists(
                 connection,
                 table=USERS_TABLE,
@@ -424,13 +422,7 @@ class SqliteTenantRepository:
             )
         )
         with self._database.transaction() as connection:
-            self._assert_exists(
-                connection,
-                table=ORGANIZATIONS_TABLE,
-                column="organization_id",
-                value=stored.organization_id,
-                label="Organization",
-            )
+            self._assert_organization_active(connection, stored.organization_id)
             try:
                 connection.execute(
                     _insert(REVIEW_QUEUES_TABLE, _QUEUE_COLUMNS),
@@ -536,6 +528,42 @@ class SqliteTenantRepository:
         ).fetchone()
         if row is None:
             raise IdentityNotFoundError(f"{label} {value} is not stored.")
+
+    @staticmethod
+    def _assert_organization_active(
+        connection: sqlite3.Connection,
+        organization_id: str,
+    ) -> None:
+        """Refuse ordinary growth of a tenant that is not ACTIVE.
+
+        Enforced here rather than in the operator commands because this is the
+        boundary every supported caller already passes through. A check in the
+        CLI would leave the repository itself open, and the repository is what
+        the bootstrap helpers and the tests reach for directly.
+
+        Runs inside the caller's IMMEDIATE transaction, so the status this read
+        returns is the status the insert commits against -- an organization
+        cannot be suspended in between.
+
+        Existence is reported separately and first: "no such organization" and
+        "that organization is suspended" are different operator problems with
+        different fixes.
+        """
+        row = connection.execute(
+            f"SELECT status FROM {ORGANIZATIONS_TABLE} WHERE organization_id = ?",
+            (organization_id,),
+        ).fetchone()
+        if row is None:
+            raise IdentityNotFoundError(f"Organization {organization_id} is not stored.")
+        status = OrganizationStatus(str(row["status"]))
+        if status is not OrganizationStatus.ACTIVE:
+            raise OrganizationNotActiveError(
+                f"Organization {organization_id} is {status.value}, not ACTIVE. Creating "
+                "review queues, granting memberships, and registering workflows are "
+                "ordinary business operations and are refused in a suspended "
+                "organization. Its existing data is untouched; reactivate the "
+                "organization to resume work in it."
+            )
 
     def timestamp(self) -> str:
         """The repository's clock, so operator tooling stamps one consistent time."""

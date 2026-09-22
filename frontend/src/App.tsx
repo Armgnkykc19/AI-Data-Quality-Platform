@@ -92,8 +92,9 @@ export default function App() {
         <div className={styles.notice} role="note">
           <p className={styles.noticeTitle}>Local reviewer tool — not authenticated.</p>
           <p className={styles.noticeBody}>
-            This interface talks to a review API bound to localhost. It has no authentication, no
-            verified reviewer identity, and no tenant isolation. It is not internet-ready.
+            This local UI does not sign in and does not send credentials. The review API
+            requires authentication and tenant-scoped authorization. This screen is not a
+            login UI and is not internet-ready.
           </p>
         </div>
         <h1 className={styles.title}>Reviewer UI</h1>
