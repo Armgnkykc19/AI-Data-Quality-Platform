@@ -33,14 +33,14 @@ jobs:
       - name: Run Ruff Format Check
         run: ruff format --check .
 
-      - name: Run tests
-        run: pytest
-
       - name: Build golden dataset CI smoke artifact
         run: python scripts/build_golden_dataset.py --config configs/dataset.ci.yaml
 
       - name: Validate golden dataset CI smoke artifact
         run: python scripts/validate_dataset.py --dataset datasets/generated/ci-smoke/v0.1.0
+
+      - name: Run tests
+        run: pytest
 
       - name: Profile CSV parser smoke
         run: python scripts/profile_dataset.py datasets/golden/v0.1.0/malformed/utf8_turkish.csv
