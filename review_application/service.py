@@ -145,6 +145,11 @@ class ReviewQueueService:
         is the state the write lands on. See the module docstring for why a
         per-case version cannot substitute for that.
 
+        This scope never calls a semantic provider, LLM, or other network
+        client. Authorization is the in-process Sprint 08 domain against the
+        loaded bundle. A live suggestion path is a different command and is
+        not taken here.
+
         Raises ``ReviewConflictError`` if the case moved, and propagates the
         Sprint 08 errors -- ``HumanReviewContradictionError``,
         ``HumanReviewAuthorizationError``,

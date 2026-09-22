@@ -192,3 +192,44 @@ def test_initialization_is_idempotent(config: ReviewPersistenceConfig) -> None:
         assert count["n"] == 1
     finally:
         database.close()
+
+
+WEAK_RESOLUTION_SEQUENCE_INDEX = """
+CREATE UNIQUE INDEX ux_review_case_events_resolution_sequence
+    ON review_case_events (review_queue_id, review_case_id, resolution_sequence)
+    WHERE resolution_sequence IS NOT NULL
+""".strip()
+
+
+def test_a_2_0_0_database_with_the_weak_sequence_index_is_refused(
+    config: ReviewPersistenceConfig,
+) -> None:
+    """Schema 2.0.0 shipped with Sprint 13; the old unique key is not served."""
+    created = open_review_database(config)
+    created.close()
+
+    connection = sqlite3.connect(config.database_path)
+    try:
+        connection.execute("DROP INDEX ux_review_case_events_resolution_sequence")
+        connection.execute(WEAK_RESOLUTION_SEQUENCE_INDEX)
+        connection.commit()
+        stored = connection.execute("SELECT schema_version FROM schema_meta").fetchone()[0]
+    finally:
+        connection.close()
+
+    assert stored == DATABASE_SCHEMA_VERSION
+    with pytest.raises(ReviewSchemaVersionError, match="queue-global unique"):
+        open_review_database(config)
+
+    # Refusal must not rewrite the marker or the weak index.
+    connection = sqlite3.connect(config.database_path)
+    try:
+        sql = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' "
+            "AND name = 'ux_review_case_events_resolution_sequence'"
+        ).fetchone()[0]
+        version = connection.execute("SELECT schema_version FROM schema_meta").fetchone()[0]
+    finally:
+        connection.close()
+    assert "review_case_id" in sql
+    assert version == DATABASE_SCHEMA_VERSION

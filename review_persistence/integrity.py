@@ -9,13 +9,10 @@ and repair are different operations with different risks, and only the first
 one is safe to automate.
 
 Why it exists now. Sprint 14 Phase A tightened the resolution-sequence index
-without bumping the schema version, because 2.0.0 has never shipped and this
-project's rule is to extend an unreleased version in place. The honest cost of
-that rule is that ``ReviewDatabase.initialize`` runs the DDL only for a file
-with none of our tables, so a database created *before* the change keeps the
-old, weaker index and still passes the version check. There is no migration to
-detect that, so this is what detects it: :func:`verify_review_queue` reports a
-queue whose expected indexes are missing.
+and startup now refuses a 2.0.0 file whose index is still the Sprint 13
+(queue, case, sequence) shape. This module is the operator-facing detector
+for a connection that is already open: it reports a missing or weak index
+without repairing it. It is not a substitute for the startup assertion.
 
 The findings are deliberately two-layered.
 
@@ -43,10 +40,12 @@ from dataclasses import dataclass
 from review_application.errors import ReviewApplicationError
 from review_persistence.identity_schema import ORGANIZATIONS_TABLE, REVIEW_QUEUES_TABLE
 from review_persistence.schema import (
+    RESOLUTION_SEQUENCE_INDEX_NAME,
     REVIEW_CASE_EVENTS_TABLE,
     REVIEW_CASES_TABLE,
     SEMANTIC_SUGGESTIONS_TABLE,
     assert_supported_schema_version,
+    resolution_sequence_index_enforces_queue_global,
 )
 from review_persistence.sqlite.database import ReviewDatabase
 from review_persistence.sqlite.review_repository import SqliteReviewCaseRepository
@@ -62,7 +61,7 @@ __all__ = [
 # Sprint 14 Phase A constraint and is the reason this list is checked at all: a
 # database created before it exists will be missing exactly that entry.
 EXPECTED_REVIEW_INDEXES: tuple[str, ...] = (
-    "ux_review_case_events_resolution_sequence",
+    RESOLUTION_SEQUENCE_INDEX_NAME,
     "ix_review_cases_status",
     "ix_review_case_events_case",
     "ix_semantic_suggestions_case",
@@ -193,28 +192,39 @@ def verify_review_queue(
 
 
 def _check_expected_indexes(connection) -> list[IntegrityFinding]:  # type: ignore[no-untyped-def]
-    """The check that catches a database created before a constraint existed.
-
-    Named indexes rather than a DDL comparison: an index name is stable and an
-    operator can act on it, while a textual DDL diff would report formatting.
-    """
-    present = {
-        str(row["name"])
-        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")
+    """Catch a missing index, and a same-name index with the weak column list."""
+    findings: list[IntegrityFinding] = []
+    rows = {
+        str(row["name"]): row["sql"]
+        for row in connection.execute("SELECT name, sql FROM sqlite_master WHERE type = 'index'")
     }
-    missing = [name for name in EXPECTED_REVIEW_INDEXES if name not in present]
-    if not missing:
-        return []
-    return [
-        IntegrityFinding(
-            "INDEX_MISSING",
-            f"Expected indexes are absent: {sorted(missing)}. A database created before "
-            "an index was added keeps the schema it was created with, because nothing "
-            "alters an existing database on startup. Provision a new database and "
-            "re-register the workflow, or add the index deliberately after verifying the "
-            "data satisfies it.",
+    missing = [name for name in EXPECTED_REVIEW_INDEXES if name not in rows]
+    if missing:
+        findings.append(
+            IntegrityFinding(
+                "INDEX_MISSING",
+                f"Expected indexes are absent: {sorted(missing)}. A database created before "
+                "an index was added keeps the schema it was created with, because nothing "
+                "alters an existing database on startup. Provision a new database and "
+                "re-register the workflow.",
+            )
         )
-    ]
+    sequence_sql = rows.get(RESOLUTION_SEQUENCE_INDEX_NAME)
+    if RESOLUTION_SEQUENCE_INDEX_NAME in rows and not (
+        resolution_sequence_index_enforces_queue_global(
+            None if sequence_sql is None else str(sequence_sql)
+        )
+    ):
+        findings.append(
+            IntegrityFinding(
+                "INDEX_INCOMPATIBLE",
+                f"{RESOLUTION_SEQUENCE_INDEX_NAME} is present but does not uniquely "
+                "constrain (review_queue_id, resolution_sequence). The Sprint 13 shape "
+                "included review_case_id and cannot enforce the queue-global ordinal. "
+                "Nothing here rewrites the index or renumbers sequences.",
+            )
+        )
+    return findings
 
 
 def _check_sequence_uniqueness(connection, review_queue_id: str) -> list[IntegrityFinding]:  # type: ignore[no-untyped-def]

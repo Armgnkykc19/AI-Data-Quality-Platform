@@ -56,25 +56,17 @@ from review_persistence.identity_schema import (
 )
 from semantic_review.models import FORBIDDEN_HUMAN_DECISIONS, SemanticSuggestionType
 
-# Still 2.0.0 after Sprint 14 Phase A tightened the resolution-sequence index,
-# and that is a deliberate application of this project's existing rule rather
-# than an oversight.
-#
-# A version number exists so that an *already existing* database can be
-# recognised and handled. 2.0.0 has never shipped -- it is still being
-# assembled, and no database outside a working tree declares it -- so there is
-# nothing for a bump to distinguish. Sprint 10 set the precedent explicitly
-# when it added the workflow-context table to an unreleased 1.0.0 instead of
-# inventing 1.1.0. Bumping here would mean writing, testing and documenting a
-# migration between two versions of a schema that only ever existed as one.
-#
-# The cost of the rule is real and is worth naming: ``initialize`` runs the DDL
-# only for a database with no tables, so a 2.0.0 file created *before* this
-# change keeps the old, weaker index and still passes the version check. That
-# is a local-development file, not a deployment, and the honest answer to it is
-# detection rather than a migration framework -- ``verify-queue`` reports a
-# queue whose expected indexes are missing. See
-# ``review_persistence.integrity``.
+# Still 2.0.0 after Sprint 14 Phase A tightened the resolution-sequence index.
+# 2.0.0 shipped with Sprint 13 tenant ownership (Phase B, then PR #15). That is
+# a repository release, not an external production database, and those are
+# different facts. Bumping to 2.1.0 would invent a migration between two
+# in-repo shapes of the same tenant schema, and this project still has no
+# in-place migrator. The chosen contract is therefore Option B: keep the
+# semantic version and refuse to open a 2.0.0 file whose unique index does not
+# enforce the queue-global sequence invariant. ``initialize`` asserts the
+# live index SQL, not only the version string. Nothing is rewritten, sequences
+# are never renumbered, and ``verify-queue`` remains a read-only detector --
+# it is not the startup guarantee. See ``assert_resolution_sequence_index``.
 DATABASE_SCHEMA_VERSION = "2.0.0"
 SUPPORTED_DATABASE_SCHEMA_VERSIONS = frozenset({DATABASE_SCHEMA_VERSION})
 
@@ -406,11 +398,50 @@ CREATE_TABLE_STATEMENTS: tuple[str, ...] = (
 # Still partial: lifecycle and semantic rows carry NULL sequences, many per
 # queue, and NULLs must stay unconstrained. That is also the statement that a
 # semantic suggestion consumes no resolution ordinal.
+RESOLUTION_SEQUENCE_INDEX_NAME = "ux_review_case_events_resolution_sequence"
+
 UNIQUE_RESOLUTION_SEQUENCE_INDEX = f"""
-CREATE UNIQUE INDEX IF NOT EXISTS ux_review_case_events_resolution_sequence
+CREATE UNIQUE INDEX IF NOT EXISTS {RESOLUTION_SEQUENCE_INDEX_NAME}
     ON {REVIEW_CASE_EVENTS_TABLE} (review_queue_id, resolution_sequence)
     WHERE resolution_sequence IS NOT NULL
 """.strip()
+
+
+def resolution_sequence_index_enforces_queue_global(sql: str | None) -> bool:
+    """True only for a unique index on (review_queue_id, resolution_sequence).
+
+    The Sprint 13 shape named the same index and included ``review_case_id``.
+    Name equality is therefore not a compatibility check.
+    """
+    if not sql:
+        return False
+    normalized = " ".join(sql.lower().split())
+    if "review_case_id" in normalized:
+        return False
+    return "review_queue_id" in normalized and "resolution_sequence" in normalized
+
+
+def assert_resolution_sequence_index(connection: object) -> None:
+    """Refuse a 2.0.0 database that does not enforce queue-global sequences.
+
+    Called on every open of an existing database. Missing or weak indexes fail
+    closed. The file is not altered: no DROP, no CREATE, no sequence rewrite.
+    """
+    row = connection.execute(  # type: ignore[attr-defined]
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (RESOLUTION_SEQUENCE_INDEX_NAME,),
+    ).fetchone()
+    sql = None if row is None else str(row["sql"] if row["sql"] is not None else "")
+    if resolution_sequence_index_enforces_queue_global(sql):
+        return
+    raise ReviewSchemaVersionError(
+        "Review database declares schema version "
+        f"'{DATABASE_SCHEMA_VERSION}' but does not enforce a queue-global unique "
+        f"resolution_sequence index ({RESOLUTION_SEQUENCE_INDEX_NAME}). This build "
+        "will not start a writable runtime against that file. The database is not "
+        "upgraded, rewritten, or repaired. Provision a new database and re-register "
+        "the workflow. Duplicate sequences are never renumbered in place."
+    )
 
 
 # Every review index leads with review_queue_id, because every review query

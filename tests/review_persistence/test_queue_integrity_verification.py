@@ -160,12 +160,7 @@ def test_a_missing_index_is_reported_on_its_own(
     review_queue: ReviewQueue,
     healthy_queue: ReviewWorkflowState,
 ) -> None:
-    """The check that covers extending an unreleased schema version in place.
-
-    A database created before the constraint existed keeps the schema it was
-    created with and still passes the version check, so this is the only thing
-    that notices.
-    """
+    """A dropped index is a finding, not a silent pass."""
     database.connect().execute("DROP INDEX ux_review_case_events_resolution_sequence")
 
     report = verify_review_queue(database, review_queue_id=review_queue.review_queue_id)
@@ -173,6 +168,26 @@ def test_a_missing_index_is_reported_on_its_own(
     assert not report.ok
     assert report.codes() == ("INDEX_MISSING",)
     assert "ux_review_case_events_resolution_sequence" in report.findings[0].detail
+
+
+def test_the_sprint_13_weak_index_is_reported_as_incompatible(
+    database: ReviewDatabase,
+    review_queue: ReviewQueue,
+    healthy_queue: ReviewWorkflowState,
+) -> None:
+    connection = database.connect()
+    connection.execute("DROP INDEX ux_review_case_events_resolution_sequence")
+    connection.execute(
+        "CREATE UNIQUE INDEX ux_review_case_events_resolution_sequence "
+        "ON review_case_events (review_queue_id, review_case_id, resolution_sequence) "
+        "WHERE resolution_sequence IS NOT NULL"
+    )
+
+    report = verify_review_queue(database, review_queue_id=review_queue.review_queue_id)
+
+    assert not report.ok
+    assert "INDEX_INCOMPATIBLE" in report.codes()
+    assert "INDEX_MISSING" not in report.codes()
 
 
 def test_every_expected_index_is_actually_present_in_a_fresh_database(

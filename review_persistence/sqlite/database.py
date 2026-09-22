@@ -28,11 +28,12 @@ every existing handler answers it unchanged -- and the message says plainly
 that no migration exists rather than naming one that does not.
 
 Note what :meth:`ReviewDatabase.initialize` does and does not do. It creates
-the schema only for a file with none of our tables; an existing database is
-version-checked and otherwise left exactly as it is. So a constraint added to
-an unreleased version does not reach a file that was created before it, and the
-version check cannot notice. ``verify-queue`` is what notices; see
-``review_persistence.integrity``.
+the schema only for a file with none of our tables. An existing database is
+version-checked **and** structurally checked: a 2.0.0 file whose
+resolution-sequence unique index is missing or still includes
+``review_case_id`` is refused. The file is not rewritten. ``verify-queue``
+can describe the same defect on a connection that is already open; it is not
+what makes startup fail closed. See ``review_persistence.schema``.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
     SCHEMA_META_TABLE,
     SCHEMA_STATEMENTS,
+    assert_resolution_sequence_index,
     assert_supported_schema_version,
 )
 
@@ -279,6 +281,7 @@ class ReviewDatabase:
 
         if SCHEMA_META_TABLE in present:
             assert_supported_schema_version(self._read_schema_version(connection))
+            assert_resolution_sequence_index(connection)
             return connection
 
         if present:
