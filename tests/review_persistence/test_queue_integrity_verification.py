@@ -29,6 +29,7 @@ from review_persistence.integrity import (
 from review_persistence.schema import (
     DATABASE_SCHEMA_VERSION,
     REVIEW_CASE_EVENTS_TABLE,
+    REVIEW_CASES_TABLE,
     SCHEMA_META_TABLE,
 )
 from review_persistence.sqlite.database import ReviewDatabase
@@ -250,6 +251,56 @@ def test_a_pending_case_holding_a_resolution_event_is_reported(
 
     assert not report.ok
     assert "PENDING_CASE_HAS_RESOLUTION_EVENT" in report.codes()
+
+
+def test_a_gap_in_resolution_ordinals_is_reported(
+    database: ReviewDatabase,
+    repository: SqliteReviewCaseRepository,
+    review_queue: ReviewQueue,
+    healthy_queue: ReviewWorkflowState,
+) -> None:
+    service = ReviewQueueService(repository)
+    for case in healthy_queue.cases:
+        service.resolve_case(
+            case.review_case_id,
+            decision=HumanReviewDecision.NO_MATCH,
+            reviewer_id="reviewer-1",
+            expected_version=1,
+        )
+    connection = database.connect()
+    max_seq = connection.execute(
+        f"SELECT MAX(resolution_sequence) AS seq FROM {REVIEW_CASE_EVENTS_TABLE} "
+        "WHERE review_queue_id = ? AND resolution_sequence IS NOT NULL",
+        (review_queue.review_queue_id,),
+    ).fetchone()["seq"]
+    assert max_seq is not None
+    connection.execute(
+        f"UPDATE {REVIEW_CASE_EVENTS_TABLE} SET resolution_sequence = ? "
+        "WHERE review_queue_id = ? AND resolution_sequence = ?",
+        (int(max_seq) + 2, review_queue.review_queue_id, max_seq),
+    )
+
+    report = verify_review_queue(database, review_queue_id=review_queue.review_queue_id)
+
+    assert not report.ok
+    assert "RESOLUTION_SEQUENCE_DISCONTINUOUS" in report.codes()
+
+
+def test_a_resolved_case_without_history_is_reported(
+    database: ReviewDatabase,
+    review_queue: ReviewQueue,
+    healthy_queue: ReviewWorkflowState,
+) -> None:
+    database.connect().execute(
+        f"UPDATE {REVIEW_CASES_TABLE} SET status = 'MATCH' "
+        "WHERE review_queue_id = ? AND review_case_id = ?",
+        (review_queue.review_queue_id, healthy_queue.cases[0].review_case_id),
+    )
+
+    report = verify_review_queue(database, review_queue_id=review_queue.review_queue_id)
+
+    assert not report.ok
+    assert "RESOLVED_CASE_WITHOUT_HISTORY" in report.codes()
 
 
 def test_an_unsupported_schema_stops_the_run_immediately(

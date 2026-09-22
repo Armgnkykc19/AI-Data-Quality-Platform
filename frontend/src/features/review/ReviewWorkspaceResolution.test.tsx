@@ -630,9 +630,7 @@ describe('a recorded decision', () => {
         within(screen.getByRole('region', { name: 'Event history' })).getByText('Resolved as Match'),
       ).toBeInTheDocument();
     });
-    // The response's own event carries `event_id: null`; nothing was inserted
-    // from it, and no placeholder or invented id reached the timeline.
-    expect(matchResolveResponse.event.event_id).toBeNull();
+    // History is rebuilt from GET /events, not by inserting the POST event.
     const timeline = within(screen.getByRole('region', { name: 'Event history' }));
     expect(timeline.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.queryByText(/unknown event/i)).toBeNull();
@@ -1023,25 +1021,29 @@ const pendingCaseBDetail = {
 } satisfies ReviewCaseDetail;
 
 describe('decision controls while a confirmation is open', () => {
-  it('disables the other decisions so a second intent cannot start', async () => {
-    const { user } = await renderPending();
+  it.each(['Match', 'No match', 'Defer'] as const)(
+    'disables the other decisions when %s confirmation is open',
+    async (name) => {
+      const { user } = await renderPending();
 
-    await user.click(decisionButton('Match'));
-    expect(screen.getByRole('region', { name: 'Confirm this decision' })).toBeInTheDocument();
+      await user.click(decisionButton(name));
+      expect(screen.getByRole('region', { name: 'Confirm this decision' })).toBeInTheDocument();
 
-    expect(decisionButton('Match')).toBeDisabled();
-    expect(decisionButton('No match')).toBeDisabled();
-    expect(decisionButton('Defer')).toBeDisabled();
+      expect(decisionButton('Match')).toBeDisabled();
+      expect(decisionButton('No match')).toBeDisabled();
+      expect(decisionButton('Defer')).toBeDisabled();
 
-    await user.click(decisionButton('No match'));
-    await user.click(decisionButton('Defer'));
+      await user.click(decisionButton('Match'));
+      await user.click(decisionButton('No match'));
+      await user.click(decisionButton('Defer'));
 
-    expect(resolveCalls()).toHaveLength(0);
-    expect(
-      within(screen.getByRole('region', { name: 'Confirm this decision' })).getByText('Match'),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeInTheDocument();
-  });
+      expect(resolveCalls()).toHaveLength(0);
+      expect(
+        within(screen.getByRole('region', { name: 'Confirm this decision' })).getByText(name),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+    },
+  );
 });
 
 describe('an in-flight resolution across a case switch', () => {

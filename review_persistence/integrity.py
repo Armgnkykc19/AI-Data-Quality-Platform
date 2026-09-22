@@ -171,6 +171,9 @@ def verify_review_queue(
     findings.extend(_check_sequence_uniqueness(connection, review_queue_id))
     checks.append("resolution_sequence_queue_global_unique")
 
+    findings.extend(_check_sequence_continuity(connection, review_queue_id))
+    checks.append("resolution_sequence_continuous")
+
     findings.extend(_check_orphaned_children(connection, review_queue_id))
     checks.append("child_rows_reference_a_stored_case")
 
@@ -254,6 +257,30 @@ def _check_sequence_uniqueness(connection, review_queue_id: str) -> list[Integri
     ]
 
 
+def _check_sequence_continuity(connection, review_queue_id: str) -> list[IntegrityFinding]:  # type: ignore[no-untyped-def]
+    """Non-null ordinals must be exactly 1, 2, ..., n. Gaps are not repaired."""
+    rows = connection.execute(
+        f"SELECT DISTINCT resolution_sequence AS seq FROM {REVIEW_CASE_EVENTS_TABLE} "
+        "WHERE review_queue_id = ? AND resolution_sequence IS NOT NULL "
+        "ORDER BY resolution_sequence",
+        (review_queue_id,),
+    ).fetchall()
+    sequences = [int(row["seq"]) for row in rows]
+    if not sequences:
+        return []
+    expected = list(range(1, sequences[-1] + 1))
+    if sequences == expected:
+        return []
+    return [
+        IntegrityFinding(
+            "RESOLUTION_SEQUENCE_DISCONTINUOUS",
+            f"Resolution ordinals in queue {review_queue_id} are {sequences}, not "
+            f"{expected}. History reconstruction requires 1, 2, 3, ... with no gap. "
+            "Nothing here renumbers them.",
+        )
+    ]
+
+
 def _check_orphaned_children(connection, review_queue_id: str) -> list[IntegrityFinding]:  # type: ignore[no-untyped-def]
     """Events and suggestions whose case is not in the same queue."""
     findings: list[IntegrityFinding] = []
@@ -283,12 +310,14 @@ def _check_orphaned_children(connection, review_queue_id: str) -> list[Integrity
 
 
 def _check_resolved_cases_and_history(connection, review_queue_id: str) -> list[IntegrityFinding]:  # type: ignore[no-untyped-def]
-    """A resolved case must not carry more than one resolution event.
+    """A resolved case must agree with its resolution history.
 
-    The eventless resolved case is *not* reported. It is the legacy shape of a
-    database written before the event table existed, and
-    ``review_application.history`` reads it deliberately by projecting the
-    resolution the domain already stamped on the case.
+    Duplicate resolution events, a PENDING case holding a resolution event, and
+    a resolved case with no resolution event are all reported. The last of those
+    is unrepresentable through the current write path: registration accepts
+    only PENDING, and ``apply_resolution`` always appends the event in the same
+    transaction. An eventless resolved row is therefore a finding, not a
+    supported legacy shape, for any database this verifier is willing to open.
     """
     findings: list[IntegrityFinding] = []
     duplicated = connection.execute(
@@ -322,6 +351,26 @@ def _check_resolved_cases_and_history(connection, review_queue_id: str) -> list[
                 f"{pending_with_resolution['n']} case(s) in queue {review_queue_id} are "
                 "PENDING but have a resolution event. The case row and its history "
                 "disagree about whether a decision was made.",
+            )
+        )
+
+    resolved_without_history = connection.execute(
+        f"SELECT COUNT(*) AS n FROM {REVIEW_CASES_TABLE} AS c "
+        "WHERE c.review_queue_id = ? AND c.status != 'PENDING' AND NOT EXISTS ("
+        f"SELECT 1 FROM {REVIEW_CASE_EVENTS_TABLE} AS e "
+        "WHERE e.review_queue_id = c.review_queue_id "
+        "AND e.review_case_id = c.review_case_id "
+        "AND e.resolution_sequence IS NOT NULL"
+        ")",
+        (review_queue_id,),
+    ).fetchone()
+    if resolved_without_history["n"]:
+        findings.append(
+            IntegrityFinding(
+                "RESOLVED_CASE_WITHOUT_HISTORY",
+                f"{resolved_without_history['n']} case(s) in queue {review_queue_id} are "
+                "resolved but have no resolution event. The current write path cannot "
+                "produce that state; nothing here invents the missing history.",
             )
         )
     return findings

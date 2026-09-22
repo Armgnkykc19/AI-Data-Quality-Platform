@@ -28,10 +28,10 @@
  *
  * **Nothing here is authoritative.** The success outcome carries the decision
  * that was submitted and not the response body. The response's `case` is a
- * true statement about the case, but the response's `event` carries
- * `event_id: null` by construction, and treating any of it as the rendered
- * final state invites a UI that stops re-reading. Convergence is the caller's
- * job, through the published GETs.
+ * true statement about the case, and its `event` may now carry the durable
+ * `event_id`, but treating the POST body as the rendered final state still
+ * invites a UI that stops re-reading. Convergence is the caller's job,
+ * through the published GETs.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';

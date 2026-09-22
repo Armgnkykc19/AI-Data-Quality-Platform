@@ -43,11 +43,12 @@ unknown case, exactly as they do for a known case with no history. Neither can
 distinguish the two, so both routes call ``get_case`` first purely to obtain
 the 404. Skipping it would answer "200 []" for a case that does not exist.
 
-Pagination happens here, after the repository returns its matching sequence,
-and the repository's ordering is preserved exactly. Both the filter and the
-page are queue-local without this module doing anything to make them so: the
-repository it was handed can only see one queue, so another tenant's cases
-cannot enter a total, a count, or a page.
+Pagination is the repository's job: ``count_cases`` reports the filtered
+total and ``list_cases(limit=..., offset=...)`` returns one page, preserving
+the repository's ordering. Both the filter and the page are queue-local
+without this module doing anything to make them so: the repository it was
+handed can only see one queue, so another tenant's cases cannot enter a
+total, a count, or a page.
 
 Every route is ``async def`` and calls the synchronous repository inline. See
 ``review_api.dependencies`` for why that is load-bearing and temporary.
@@ -124,13 +125,13 @@ async def list_review_cases(
     an empty page that still says how many cases matched -- and every number
     here counts only this queue, because the repository cannot see another.
     """
-    matching = repository.list_cases(status=status)
-    page = matching[offset : offset + limit]
+    total = repository.count_cases(status=status)
+    page = repository.list_cases(status=status, limit=limit, offset=offset)
     items = [to_case_summary(persisted) for persisted in page]
     return ReviewCaseListResponse(
         items=items,
         count=len(items),
-        total=len(matching),
+        total=total,
         limit=limit,
         offset=offset,
     )

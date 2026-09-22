@@ -115,8 +115,23 @@ class ReviewCaseRepository(Protocol):
         """
         ...
 
-    def list_cases(self, *, status: ReviewStatus | None = None) -> tuple[PersistedCase, ...]:
-        """Return stored cases, optionally filtered by review status."""
+    def list_cases(
+        self,
+        *,
+        status: ReviewStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[PersistedCase, ...]:
+        """Return stored cases, optionally filtered by review status.
+
+        ``limit``/``offset`` page the already-filtered, already-ordered set.
+        ``limit is None`` returns every matching case. Ordering is the
+        repository's, never the caller's.
+        """
+        ...
+
+    def count_cases(self, *, status: ReviewStatus | None = None) -> int:
+        """Count stored cases, using the same filter ``list_cases`` would."""
         ...
 
     def load_workflow_bundle(self) -> WorkflowBundle:

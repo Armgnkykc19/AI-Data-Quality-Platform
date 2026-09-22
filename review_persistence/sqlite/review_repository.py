@@ -1,9 +1,10 @@
 """SQLite storage for one queue's review cases, history, and workflow context.
 
 The complete ``ReviewCaseRepository`` Protocol -- ``register_workflow``,
-``register_case``, ``get_case``, ``list_cases``, ``load_workflow_bundle``,
-``apply_resolution``, ``list_events``, ``record_semantic_suggestion`` and
-``list_semantic_suggestions`` -- implemented against one ``review_queues`` row.
+``register_case``, ``get_case``, ``list_cases``, ``count_cases``,
+``load_workflow_bundle``, ``apply_resolution``, ``list_events``,
+``record_semantic_suggestion`` and ``list_semantic_suggestions`` -- implemented
+against one ``review_queues`` row.
 
 **Every statement is scoped to that queue.** The repository is constructed with
 a ``review_queue_id`` and holds it for its lifetime; there is no method that
@@ -954,7 +955,13 @@ class SqliteReviewCaseRepository:
             raise ReviewCaseNotFoundError(f"Review case not found: {review_case_id}")
         return persisted
 
-    def list_cases(self, *, status: ReviewStatus | None = None) -> tuple[PersistedCase, ...]:
+    def list_cases(
+        self,
+        *,
+        status: ReviewStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[PersistedCase, ...]:
         """Return this queue's cases in a deterministic order.
 
         Ordered by created_at_utc then review_case_id: registration order for
@@ -962,7 +969,22 @@ class SqliteReviewCaseRepository:
         between cases registered inside the same second. Another queue's cases
         are never counted, listed, or paged over.
         """
-        return self._select_cases(self._database.connect(), status=status)
+        return self._select_cases(
+            self._database.connect(),
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+    def count_cases(self, *, status: ReviewStatus | None = None) -> int:
+        """Count this queue's cases under the same filter ``list_cases`` uses."""
+        sql = f"SELECT COUNT(*) AS n FROM {REVIEW_CASES_TABLE} WHERE review_queue_id = ?"
+        parameters: tuple[str, ...] = (self._review_queue_id,)
+        if status is not None:
+            sql += " AND status = ?"
+            parameters = (*parameters, status.value)
+        row = self._database.connect().execute(sql, parameters).fetchone()
+        return int(row["n"])
 
     def load_workflow_bundle(self) -> WorkflowBundle:
         """Load everything Sprint 08 MATCH authorization needs, as one snapshot.
@@ -1054,15 +1076,22 @@ class SqliteReviewCaseRepository:
         connection: sqlite3.Connection,
         *,
         status: ReviewStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> tuple[PersistedCase, ...]:
         # The queue predicate is in _SELECT_CASES and is never optional; status
-        # is the only thing a caller can add.
+        # is the only thing a caller can add. LIMIT/OFFSET page that filtered
+        # ordered set in SQLite rather than materializing it in the caller.
         sql = _SELECT_CASES
-        parameters: tuple[str, ...] = (self._review_queue_id,)
+        parameters: tuple[object, ...] = (self._review_queue_id,)
         if status is not None:
             sql += " AND status = ?"
             parameters = (*parameters, status.value)
-        rows = connection.execute(sql + _CASE_ORDER, parameters).fetchall()
+        sql += _CASE_ORDER
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            parameters = (*parameters, limit, offset)
+        rows = connection.execute(sql, parameters).fetchall()
         return tuple(row_to_persisted_case(row) for row in rows)
 
     def _select_events(

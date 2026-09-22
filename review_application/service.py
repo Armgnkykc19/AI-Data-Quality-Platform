@@ -187,6 +187,10 @@ class ReviewQueueService:
                 event=event,
                 now_utc=now,
             )
+            event = self._require_persisted_resolution_event(
+                review_case_id,
+                written=event,
+            )
 
         return ReviewResolutionResult(
             persisted_case=stored,
@@ -194,6 +198,27 @@ class ReviewQueueService:
             event=event,
             workflow_state=updated_state,
         )
+
+    def _require_persisted_resolution_event(
+        self,
+        review_case_id: str,
+        *,
+        written: ReviewEvent,
+    ) -> ReviewEvent:
+        """Return the history row just written, including its durable event id."""
+        matches = [
+            item
+            for item in self._repository.list_events(review_case_id)
+            if item.is_resolution
+            and item.resolution_sequence == written.resolution_sequence
+            and item.event_type == written.event_type
+        ]
+        if len(matches) != 1 or matches[0].event_id is None:
+            raise ReviewEventIntegrityError(
+                f"Review case {review_case_id} did not yield a durable resolution "
+                "event after apply_resolution. The unit of work will be abandoned."
+            )
+        return matches[0]
 
     # -- domain orchestration ----------------------------------------------
 

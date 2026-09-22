@@ -417,10 +417,22 @@ def test_list_cases_ordering_is_deterministic(
 
     first = [item.review_case_id for item in repository.list_cases()]
     second = [item.review_case_id for item in repository.list_cases()]
-
     assert first == second
     keys = [(item.created_at_utc, item.review_case_id) for item in repository.list_cases()]
     assert keys == sorted(keys)
+
+
+def test_list_cases_pages_the_filtered_ordered_set(
+    repository: SqliteReviewCaseRepository, clock: FrozenClock
+) -> None:
+    _register_chain(repository, clock)
+    full = repository.list_cases()
+    assert len(full) >= 2
+    assert repository.list_cases(limit=1, offset=1) == full[1:2]
+    assert repository.count_cases() == len(full)
+    assert repository.count_cases(status=ReviewStatus.PENDING) == len(full)
+    assert repository.list_cases(status=ReviewStatus.MATCH, limit=10, offset=0) == ()
+    assert repository.count_cases(status=ReviewStatus.MATCH) == 0
 
 
 def test_list_cases_ties_break_on_review_case_id(
@@ -503,6 +515,7 @@ def test_repository_exposes_no_decision_mutation_method() -> None:
         "register_workflow",
         "get_case",
         "list_cases",
+        "count_cases",
         "load_workflow_bundle",
         "apply_resolution",
         "list_events",

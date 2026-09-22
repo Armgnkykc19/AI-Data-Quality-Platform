@@ -315,15 +315,15 @@ def resolution_result(
     """A real ``ReviewResolutionResult``, assembled from a real domain resolution.
 
     The workflow produces the case and the audit entry; only the persistence
-    metadata is supplied here, standing in for what storage would have stamped.
-    Nothing about the decision itself is hand-built.
+    metadata is supplied here, standing in for what storage stamps, including
+    the durable event id a successful write now returns.
     """
     case, state, _ = build_case(left_id, right_id, decision=decision, reviewer_id=reviewer_id)
     entry = last_audit_entry(state)
     return ReviewResolutionResult(
         persisted_case=persist(case, version=2),
         audit_entry=entry,
-        event=ReviewEvent.from_audit_entry(entry, occurred_at_utc=LATER),
+        event=ReviewEvent.from_audit_entry(entry, occurred_at_utc=LATER, event_id=1),
         workflow_state=state,
     )
 

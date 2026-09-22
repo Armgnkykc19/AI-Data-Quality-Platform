@@ -141,13 +141,17 @@ def write_review_reports(
     entity_records: list[EntityRecord] | tuple[EntityRecord, ...] | None = None,
     resolution: ResolutionResult | None = None,
     entity_resolution_config_path: Path | str | None = None,
+    report_path: Path | None = None,
 ) -> Path:
     if entity_records is None or resolution is None:
         raise HumanReviewReportError(
             "Review reports must persist entity records and the generating resolution snapshot."
         )
-    output_directory.mkdir(parents=True, exist_ok=True)
-    report_path = output_directory / "human_review_report.json"
+    if report_path is None:
+        output_directory.mkdir(parents=True, exist_ok=True)
+        report_path = output_directory / "human_review_report.json"
+    else:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": REVIEW_REPORT_SCHEMA_VERSION,
         "artifact_type": REVIEW_REPORT_ARTIFACT_TYPE,

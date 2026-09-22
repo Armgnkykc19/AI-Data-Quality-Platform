@@ -135,6 +135,10 @@ class ReviewEvent:
     # no way of knowing and no reason to choose. None on an event that has not
     # been stored yet; populated on the way back out.
     schema_version: str | None = None
+    # Assigned by SQLite AUTOINCREMENT on INSERT. It is an identifier, not an
+    # authorization token: every history read is queue-scoped, there is no
+    # event-by-id route, and a gap cannot name another tenant's row. Queue-local
+    # opaque ids would be a schema migration, not a Phase A patch.
     event_id: int | None = None
     resolution_sequence: int | None = None
     reviewer_id: str | None = None

@@ -663,33 +663,84 @@ def _refuse_report_resolution() -> int:
     return EXIT_USAGE
 
 
+def _unlink_quietly(path: Path) -> None:
+    """Best-effort removal of a staged report. Failure must not hide the original error."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _generate(args: argparse.Namespace) -> int:
     ingestion_config = load_ingestion_config(args.ingestion_config)
     resolution_config = load_entity_resolution_config(args.entity_resolution_config)
     records = _load_records(args.input_path, ingestion_config)
     resolution = resolve_entities(records, config=resolution_config)
     state = generate_review_cases(resolution, config=resolution_config)
-    report_path = write_review_reports(
-        ReviewWorkflow(state).to_outcome(),
-        output_directory=args.report_dir,
-        entity_records=records,
-        resolution=resolution,
-        entity_resolution_config_path=args.entity_resolution_config,
-    )
-    print(f"Generated {len(state.cases)} review cases.")
-    print(f"Report: {report_path}")
+    outcome = ReviewWorkflow(state).to_outcome()
+    report_fields = {
+        "entity_records": records,
+        "resolution": resolution,
+        "entity_resolution_config_path": args.entity_resolution_config,
+    }
 
+    # Generate-only: the report is the whole product, so it is written immediately.
     if not args.register_review_queue:
+        report_path = write_review_reports(
+            outcome,
+            output_directory=args.report_dir,
+            **report_fields,
+        )
+        print(f"Generated {len(state.cases)} review cases.")
+        print(f"Report: {report_path}")
         return EXIT_OK
-    return _register_queue(
-        state,
-        records=records,
-        resolution=resolution,
-        entity_resolution_config_path=args.entity_resolution_config,
-        review_db=args.review_db,
-        organization_slug=args.organization,
-        queue_name=args.review_queue,
-    )
+
+    # Register-and-report: stage the artifact, register durably, then publish.
+    # A final human_review_report.json must not exist unless registration
+    # succeeded, and a staging failure must not start a database write.
+    output_directory = Path(args.report_dir)
+    final_path = output_directory / "human_review_report.json"
+    temp_path = output_directory / ".human_review_report.json.tmp"
+    try:
+        write_review_reports(
+            outcome,
+            output_directory=output_directory,
+            report_path=temp_path,
+            **report_fields,
+        )
+    except OSError:
+        _unlink_quietly(temp_path)
+        raise
+
+    try:
+        code = _register_queue(
+            state,
+            records=records,
+            resolution=resolution,
+            entity_resolution_config_path=args.entity_resolution_config,
+            review_db=args.review_db,
+            organization_slug=args.organization,
+            queue_name=args.review_queue,
+        )
+    except Exception:
+        _unlink_quietly(temp_path)
+        raise
+
+    try:
+        temp_path.replace(final_path)
+    except OSError as exc:
+        _unlink_quietly(temp_path)
+        print("Registration succeeded into the durable review queue.")
+        print(f"Report artifact failed: {exc}")
+        print(
+            "The queue was not rolled back. Re-run generate with "
+            "--register-review-queue; identical PENDING registration is idempotent."
+        )
+        return EXIT_REPORT
+
+    print(f"Generated {len(state.cases)} review cases.")
+    print(f"Report: {final_path}")
+    return code
 
 
 def main() -> int:

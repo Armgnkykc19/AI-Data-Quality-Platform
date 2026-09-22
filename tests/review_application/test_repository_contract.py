@@ -29,6 +29,7 @@ EXPECTED_REPOSITORY_METHODS = frozenset(
         "register_workflow",
         "get_case",
         "list_cases",
+        "count_cases",
         "load_workflow_bundle",
         "apply_resolution",
         "list_events",
@@ -162,6 +163,7 @@ def test_repository_returns_application_and_domain_types() -> None:
 
     assert hints["get_case"]["return"] is PersistedCase
     assert hints["list_cases"]["return"] == tuple[PersistedCase, ...]
+    assert hints["count_cases"]["return"] is int
     assert hints["load_workflow_bundle"]["return"] is WorkflowBundle
     assert hints["list_events"]["return"] == tuple[ReviewEvent, ...]
     assert hints["list_semantic_suggestions"]["return"] == tuple[SemanticSuggestion, ...]
@@ -214,7 +216,16 @@ class _ConformingRepository:
     def get_case(self, review_case_id: str) -> PersistedCase:
         raise NotImplementedError
 
-    def list_cases(self, *, status: ReviewStatus | None = None) -> tuple[PersistedCase, ...]:
+    def list_cases(
+        self,
+        *,
+        status: ReviewStatus | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> tuple[PersistedCase, ...]:
+        raise NotImplementedError
+
+    def count_cases(self, *, status: ReviewStatus | None = None) -> int:
         raise NotImplementedError
 
     def load_workflow_bundle(self) -> WorkflowBundle:

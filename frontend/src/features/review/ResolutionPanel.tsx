@@ -33,11 +33,11 @@ import styles from './resolution.module.css';
  * `expected_version` exists to prevent.
  *
  * **Convergence is always a GET.** A success is not painted into local state,
- * and the POST response is not treated as history -- its event carries
- * `event_id: null` by construction. After anything that may have changed the
- * queue, or that leaves the client unable to say whether it did, the panel
- * asks its parent to re-read the authoritative detail, the event history and
- * the queue, and it offers no further decision until those reads settle.
+ * and the POST response is not treated as history. After anything that may
+ * have changed the queue, or that leaves the client unable to say whether it
+ * did, the panel asks its parent to re-read the authoritative detail, the
+ * event history and the queue, and it offers no further decision until those
+ * reads settle.
  *
  * **Nothing is ever resent.** There is no retry button, no timeout, no
  * backoff and no automatic second POST on any path -- least of all the

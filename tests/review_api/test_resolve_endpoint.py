@@ -197,17 +197,11 @@ def test_the_response_carries_the_appended_event() -> None:
     assert body["event"]["resolution_sequence"] == 1
 
 
-def test_the_response_event_id_is_null_here() -> None:
-    """Honest about what the service returned.
-
-    The id is assigned by the database during the write, and
-    ``apply_resolution`` hands back only the updated case. ``event_id`` is
-    already optional on the published event model, and a client that needs
-    stable ids reads them from the history endpoint.
-    """
+def test_the_response_forwards_the_durable_event_id() -> None:
+    """The mapper publishes the identifier the service already read from storage."""
     body = service_client(ok_service()).post(RESOLVE_URL, json=VALID_BODY).json()
 
-    assert body["event"]["event_id"] is None
+    assert body["event"]["event_id"] == 1
 
 
 def test_the_response_reuses_the_phase_b_minimisation() -> None:

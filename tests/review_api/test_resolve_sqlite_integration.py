@@ -528,13 +528,8 @@ def test_a_successful_resolution_appends_exactly_one_resolution_event(
     assert resolutions[0]["resolution_sequence"] == 1
 
 
-def test_the_appended_event_has_an_id_when_read_back(simple_queue: Queue) -> None:
-    """The response reports ``event_id: null``; the history endpoint has the id.
-
-    The service hands storage an event before the database assigns its id, and
-    ``apply_resolution`` returns only the updated case. This pins both halves so
-    the difference is a documented contract rather than a surprise.
-    """
+def test_the_appended_event_id_matches_history(simple_queue: Queue) -> None:
+    """The resolve response names the same durable event GET history returns."""
     case_id = simple_queue.only_case_id
 
     with api(simple_queue.config) as client:
@@ -543,9 +538,11 @@ def test_the_appended_event_has_an_id_when_read_back(simple_queue: Queue) -> Non
         ).json()
         events = client.get(f"{BASE_URL}/{case_id}/events").json()
 
-    assert posted["event"]["event_id"] is None
     stored = [event for event in events if event["is_resolution"]]
-    assert stored[0]["event_id"] is not None
+    assert posted["event"]["event_id"] is not None
+    assert posted["event"]["event_id"] == stored[0]["event_id"]
+    assert posted["event"]["event_type"] == stored[0]["event_type"]
+    assert posted["event"]["resolution_sequence"] == stored[0]["resolution_sequence"]
 
 
 def test_the_resolution_survives_a_restart(simple_queue: Queue) -> None:

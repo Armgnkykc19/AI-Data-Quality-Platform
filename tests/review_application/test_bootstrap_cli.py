@@ -410,6 +410,8 @@ def test_an_unknown_organization_is_refused_and_creates_nothing(
     counts = stored_row_counts(review_db)
     assert counts.get("organizations", 0) == 0
     assert_no_review_data(review_db)
+    assert not (tmp_path / "first" / "human_review_report.json").exists()
+    assert not (tmp_path / "first" / ".human_review_report.json.tmp").exists()
 
 
 def test_an_unknown_queue_in_an_existing_organization_is_refused(
@@ -623,6 +625,69 @@ def register(
         queue_name,
         entity_resolution_config=entity_resolution_config,
     )
+
+
+def test_successful_registration_publishes_the_report_afterward(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    csv_path: Path,
+    review_db: Path,
+    provisioned: str,
+) -> None:
+    report_dir = tmp_path / "report"
+    assert register(monkeypatch, csv_path, report_dir, review_db) == 0
+    assert (report_dir / "human_review_report.json").exists()
+    assert not (report_dir / ".human_review_report.json.tmp").exists()
+
+
+def test_report_staging_failure_does_not_register(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    csv_path: Path,
+    review_db: Path,
+    provisioned: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> Path:
+        raise OSError("cannot write report")
+
+    monkeypatch.setattr(manage_human_review, "write_review_reports", boom)
+    report_dir = tmp_path / "report"
+    exit_code = register(monkeypatch, csv_path, report_dir, review_db)
+
+    assert exit_code == 3
+    assert "cannot write report" in capsys.readouterr().out
+    assert stored_row_counts(review_db).get("review_cases", 0) == 0
+    assert not (report_dir / "human_review_report.json").exists()
+    assert not (report_dir / ".human_review_report.json.tmp").exists()
+
+
+def test_post_commit_report_publication_failure_is_distinguished(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    csv_path: Path,
+    review_db: Path,
+    provisioned: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    original_replace = Path.replace
+
+    def exploding_replace(self: Path, target: Path) -> Path:
+        if self.name == ".human_review_report.json.tmp":
+            raise OSError("rename failed")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", exploding_replace)
+    report_dir = tmp_path / "report"
+    exit_code = register(monkeypatch, csv_path, report_dir, review_db)
+
+    assert exit_code == 3
+    out = capsys.readouterr().out
+    assert "Registration succeeded into the durable review queue." in out
+    assert "Report artifact failed" in out
+    assert stored_row_counts(review_db).get("review_cases", 0) == 1
+    assert not (report_dir / "human_review_report.json").exists()
+    assert not (report_dir / ".human_review_report.json.tmp").exists()
 
 
 def test_registering_the_same_input_twice_is_idempotent(
