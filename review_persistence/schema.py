@@ -412,10 +412,19 @@ def resolution_sequence_index_enforces_queue_global(sql: str | None) -> bool:
 
     The Sprint 13 shape named the same index and included ``review_case_id``.
     Name equality is therefore not a compatibility check.
+
+    Uniqueness is checked explicitly rather than assumed from the name. An
+    index on the right two columns that is not UNIQUE enforces nothing at all,
+    and accepting it would let the guard report an invariant the database does
+    not hold. ``sqlite_master`` stores the statement SQLite parsed -- without
+    ``IF NOT EXISTS`` -- so a unique index always begins ``CREATE UNIQUE
+    INDEX``.
     """
     if not sql:
         return False
     normalized = " ".join(sql.lower().split())
+    if not normalized.startswith("create unique index"):
+        return False
     if "review_case_id" in normalized:
         return False
     return "review_queue_id" in normalized and "resolution_sequence" in normalized
